@@ -10,7 +10,7 @@
 
 Traditional regex scanners fail miserably on AI agent ecosystems (`SKILL.md`, `CLAUDE.md`, `.cursorrules`, `.mcp.json`, MCP servers): **every legitimate skill mentions `bash`, `curl`, prompts, or environment variables**, producing 90% false positives.
 
-Inspired by adversarial security harnesses like OpenHack v2, **AgentHack Council** runs a 3-stage pipeline purpose-built for coding agents and MCP:
+**AgentHack Council** runs a 3-stage adversarial security pipeline purpose-built for coding agents and MCP:
 
 ```text
 Target (.mcp.json / SKILL.md / CLAUDE.md / MCP code)
