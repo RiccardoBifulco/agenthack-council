@@ -1,4 +1,6 @@
+import { RULES_CATALOG } from '../scanner/rules.js';
 import type { EvaluatedFinding, ScanReport, Severity } from '../types.js';
+import { VERSION } from '../version.js';
 
 const C = {
   reset: '\x1b[0m',
@@ -36,13 +38,32 @@ function verdictPill(f: EvaluatedFinding): string {
   return `${C.bgGreen}${C.green}${C.bold} ⚖ DISMISSED (FP) ${C.reset}`;
 }
 
+export function renderRulesCatalog(): string {
+  const lines: string[] = [];
+  const bar = `${C.gray}${'─'.repeat(84)}${C.reset}`;
+  lines.push('');
+  lines.push(
+    `${C.bold}${C.cyan}⚡ AGENTHACK COUNCIL${C.reset} ${C.gray}v${VERSION} — Built-in Detection Rules (${RULES_CATALOG.length})${C.reset}`,
+  );
+  lines.push(bar);
+  for (const r of RULES_CATALOG) {
+    lines.push(
+      `  ${C.bold}${C.purple}${r.id}${C.reset}  ${sevBadge(r.defaultSeverity).padEnd(18)} ${C.bold}${r.name}${C.reset} ${C.gray}(${r.cwe} · CVSS ${r.securitySeverityScore})${C.reset}`,
+    );
+    lines.push(`           ${C.gray}${r.shortDescription}${C.reset}`);
+  }
+  lines.push(bar);
+  lines.push('');
+  return lines.join('\n');
+}
+
 export function renderCliReport(report: ScanReport): string {
   const lines: string[] = [];
-  const bar = `${C.gray}${'─'.repeat(76)}${C.reset}`;
+  const bar = `${C.gray}${'─'.repeat(78)}${C.reset}`;
 
   lines.push('');
   lines.push(
-    `${C.bold}${C.cyan}⚡ AGENTHACK COUNCIL${C.reset} ${C.gray}v0.1.0 — Adversarial Security Harness for AI Agents & MCP${C.reset}`,
+    `${C.bold}${C.cyan}⚡ AGENTHACK COUNCIL${C.reset} ${C.gray}v${VERSION} — Adversarial Security Harness for AI Agents & MCP${C.reset}`,
   );
   lines.push(bar);
   lines.push(
@@ -54,6 +75,9 @@ export function renderCliReport(report: ScanReport): string {
       `${C.yellow}${report.summary.uncertain} Uncertain${C.reset} · ` +
       `${C.green}${report.summary.dismissed} Dismissed FPs${C.reset}`,
   );
+  if (report.fallbackWarning) {
+    lines.push(`  ${C.yellow}⚠ Note:${C.reset}   ${C.gray}${report.fallbackWarning}${C.reset}`);
+  }
   lines.push(bar);
 
   if (report.findings.length === 0) {
@@ -92,7 +116,7 @@ export function renderCliReport(report: ScanReport): string {
   lines.push('');
   lines.push(bar);
   lines.push(
-    `  ${C.gray}Tip: Run with ${C.cyan}--ui${C.gray} to inspect full Council debates & unified diff patches in the browser.${C.reset}`,
+    `  ${C.gray}Tip: Run with ${C.cyan}--ui${C.gray} for the Web Dashboard or ${C.cyan}--sarif${C.gray} for GitHub Security Code Scanning.${C.reset}`,
   );
   lines.push('');
   return lines.join('\n');

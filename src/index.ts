@@ -2,13 +2,20 @@ import { deliberateFinding } from './council/index.js';
 import type { ProviderName } from './council/providers.js';
 import { runCanaryProof } from './prover/index.js';
 import { discoverLocalAgentPaths, runStaticScan } from './scanner/index.js';
+import { RULES_CATALOG } from './scanner/rules.js';
 import type { EvaluatedFinding, ScanReport, Severity } from './types.js';
+import { buildSarifReport } from './ui/sarif.js';
+import { VERSION } from './version.js';
 
 export interface AuditOptions {
   targets?: string[];
   councilMode?: 'auto' | 'llm' | 'heuristic' | 'off';
   provider?: ProviderName;
   model?: string;
+  advocateSpec?: string;
+  skepticSpec?: string;
+  judgeSpec?: string;
+  strictLlm?: boolean;
   prove?: boolean;
 }
 
@@ -42,16 +49,24 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
   const evaluated: EvaluatedFinding[] = [];
   let actualMode: ScanReport['councilMode'] = councilModePref === 'off' ? 'off' : 'heuristic';
   let modelName = councilModePref === 'off' ? 'none' : 'council-heuristic-v1';
+  let fallbackWarning: string | undefined;
 
   for (const c of candidates) {
     const council = await deliberateFinding(c, {
       mode: councilModePref,
       provider: options.provider,
       model: options.model,
+      advocateSpec: options.advocateSpec,
+      skepticSpec: options.skepticSpec,
+      judgeSpec: options.judgeSpec,
+      strictLlm: options.strictLlm,
     });
     if (council) {
       actualMode = council.mode;
       modelName = council.modelUsed;
+      if (council.fallbackReason && !fallbackWarning) {
+        fallbackWarning = council.fallbackReason;
+      }
     }
     const item: EvaluatedFinding = { ...c, council };
     if (options.prove && (council?.judge.verdict ?? 'CONFIRMED') === 'CONFIRMED') {
@@ -81,12 +96,14 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
   const { score, grade } = computeScoreAndGrade(evaluated);
 
   return {
+    version: VERSION,
     targetPath: targets.join(', ') || '(no agent paths found)',
     scannedAt: new Date().toISOString(),
     durationMs: Date.now() - t0,
     filesScanned,
     councilMode: actualMode,
     modelName,
+    fallbackWarning,
     grade,
     score,
     summary: {
@@ -100,4 +117,5 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
   };
 }
 
+export { RULES_CATALOG, buildSarifReport, VERSION };
 export * from './types.js';

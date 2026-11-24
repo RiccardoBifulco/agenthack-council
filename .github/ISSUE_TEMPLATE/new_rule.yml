@@ -1,0 +1,31 @@
+name: 🛡️ New Threat Rule Proposal
+description: Propose a new AI agent, SKILL.md, or MCP attack vector rule (AHC-0XX)
+title: "[Rule]: "
+labels: ["enhancement", "security-rule"]
+body:
+  - type: input
+    id: threat
+    attributes:
+      label: Attack Vector / Threat Name
+      placeholder: MCP Dynamic Resource URI Traversal (CWE-22)
+    validations:
+      required: true
+  - type: textarea
+    id: attack_scenario
+    attributes:
+      label: Offensive Scenario (Advocate View)
+      description: How does an attacker exploit this in Claude Code, Cursor, Codex, or an MCP client?
+    validations:
+      required: true
+  - type: textarea
+    id: fp_considerations
+    attributes:
+      label: Benign Patterns to Exclude (Skeptic View)
+      description: What legitimate skills or configs might look similar and how should Skeptic distinguish them?
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Vulnerable vs Safe Example
+      render: markdown

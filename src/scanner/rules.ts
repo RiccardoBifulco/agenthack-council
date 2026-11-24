@@ -1,5 +1,108 @@
 import path from 'node:path';
-import type { CandidateFinding, Severity, TargetCategory } from '../types.js';
+import type { CandidateFinding, RuleMetadata, Severity, TargetCategory } from '../types.js';
+
+export const RULES_CATALOG: RuleMetadata[] = [
+  {
+    id: 'AHC-001',
+    name: 'Invisible Unicode / Bidi Prompt Smuggling',
+    cwe: 'CWE-451',
+    defaultSeverity: 'critical',
+    securitySeverityScore: '9.3',
+    shortDescription: 'Detects zero-width, bidirectional override, or Unicode tag characters smuggling hidden instructions.',
+    fullDescription:
+      'Invisible Unicode control characters and tag blocks (U+E0000..U+E007F, Bidi overrides, zero-width spaces) render invisibly in IDE and GitHub PR diffs while being tokenized by coding agent LLMs.',
+  },
+  {
+    id: 'AHC-002',
+    name: 'Hidden HTML Comment / Markdown Image Exfiltration',
+    cwe: 'CWE-1427',
+    defaultSeverity: 'critical',
+    securitySeverityScore: '9.1',
+    shortDescription: 'Detects covert prompt directives inside HTML comments or zero-click Markdown image exfiltration URLs.',
+    fullDescription:
+      'Attackers hide prompt-injection instructions inside Markdown HTML comments or craft dynamic Markdown image URLs with query parameters to exfiltrate secrets upon rendering.',
+  },
+  {
+    id: 'AHC-003',
+    name: 'MCP Tool Poisoning / Shadow Agent Instruction',
+    cwe: 'CWE-1427',
+    defaultSeverity: 'critical',
+    securitySeverityScore: '9.6',
+    shortDescription: 'Detects MCP tool descriptions or skill prompts instructing the agent to silently read credentials or hide actions.',
+    fullDescription:
+      'Poisoned MCP tool metadata or SKILL.md instructions coerce the host LLM into reading sensitive files (~/.ssh, ~/.aws, .env) and passing them as tool arguments without alerting the user.',
+  },
+  {
+    id: 'AHC-004',
+    name: 'Plaintext Secret in Agent / MCP Configuration',
+    cwe: 'CWE-798',
+    defaultSeverity: 'critical',
+    securitySeverityScore: '8.8',
+    shortDescription: 'Detects hardcoded API keys, tokens, or database credentials in agent configs and skills.',
+    fullDescription:
+      'Plaintext credentials stored in .mcp.json, settings.json, or skill files are exposed to agent context windows, repository clones, and diagnostic logs. Raw secret values are automatically redacted during Stage 1 scanning.',
+  },
+  {
+    id: 'AHC-005',
+    name: 'Unpinned Remote Package / Pipe-to-Shell Execution',
+    cwe: 'CWE-829',
+    defaultSeverity: 'high',
+    securitySeverityScore: '7.8',
+    shortDescription: 'Detects unpinned `npx -y` packages or `curl | sh` execution in MCP configs, hooks, and skills.',
+    fullDescription:
+      'Dynamic unpinned execution (`npx -y pkg` without an explicit version pin or `curl ... | bash`) pulls mutable upstream code at agent startup, enabling supply-chain takeover.',
+  },
+  {
+    id: 'AHC-006',
+    name: 'Over-Privileged Agent / Unrestricted Host Access',
+    cwe: 'CWE-250',
+    defaultSeverity: 'high',
+    securitySeverityScore: '8.1',
+    shortDescription: 'Detects wildcard tool auto-approvals, permission bypass flags, or root/home filesystem mounts.',
+    fullDescription:
+      'Configurations granting `--dangerously-skip-permissions`, `Bash(*)`, wildcard `autoApprove`, or root/home MCP filesystem mounts remove human-in-the-loop containment.',
+  },
+  {
+    id: 'AHC-007',
+    name: 'Obfuscated Base64 Command / Prompt Payload',
+    cwe: 'CWE-506',
+    defaultSeverity: 'critical',
+    securitySeverityScore: '9.2',
+    shortDescription: 'Detects Base64-encoded blobs in skills, rules, or hooks that decode to shell commands or prompt overrides.',
+    fullDescription:
+      'Base64 payloads embedded in SKILL.md, CLAUDE.md, or hooks bypass naive keyword review while decoding to executable commands or covert prompt injections.',
+  },
+  {
+    id: 'AHC-008',
+    name: 'Credential / Environment Exfiltration Sink',
+    cwe: 'CWE-200',
+    defaultSeverity: 'critical',
+    securitySeverityScore: '9.4',
+    shortDescription: 'Detects outbound network sinks paired directly with credential paths or environment variables.',
+    fullDescription:
+      'Outbound HTTP/socket calls (`fetch`, `curl`, `wget`, `requests.post`, `nc`) referencing `process.env`, `.env`, or SSH/AWS credential files create an immediate secret exfiltration channel.',
+  },
+  {
+    id: 'AHC-009',
+    name: 'Insecure Remote MCP Transport / Ephemeral Tunnel',
+    cwe: 'CWE-319',
+    defaultSeverity: 'high',
+    securitySeverityScore: '7.6',
+    shortDescription: 'Detects remote MCP servers configured over cleartext HTTP or unverified ephemeral tunnel domains.',
+    fullDescription:
+      'Connecting MCP clients over non-loopback `http://` or ephemeral developer tunnels (`ngrok`, `trycloudflare`, `localtunnel`) exposes tool invocations and bearer tokens to interception and tunnel takeover.',
+  },
+  {
+    id: 'AHC-010',
+    name: 'Agent Persistence & Config Backdooring',
+    cwe: 'CWE-912',
+    defaultSeverity: 'critical',
+    securitySeverityScore: '9.0',
+    shortDescription: 'Detects directives or scripts modifying agent settings, MCP configs, git hooks, or OS startup tasks.',
+    fullDescription:
+      'Malicious skills or MCP tools achieve cross-session persistence by appending instructions or commands to `~/.claude/settings.json`, `CLAUDE.md`, `.mcp.json`, `.git/hooks/`, `crontab`, or `LaunchAgents`.',
+  },
+];
 
 export function classifyFile(filePath: string): TargetCategory | null {
   const base = path.basename(filePath);
@@ -11,28 +114,35 @@ export function classifyFile(filePath: string): TargetCategory | null {
     lower === 'mcp.json' ||
     lower === 'claude_desktop_config.json' ||
     lower === 'mcp_config.json' ||
-    normalized.endsWith('/.cursor/mcp.json')
+    normalized.endsWith('/.cursor/mcp.json') ||
+    normalized.endsWith('/.codeium/windsurf/mcp_config.json')
   ) {
     return 'mcp-config';
   }
 
-  if (lower === 'skill.md' || normalized.includes('/skills/') && lower.endsWith('.md')) {
+  if (lower === 'skill.md' || (normalized.includes('/skills/') && lower.endsWith('.md'))) {
     return 'skill-markdown';
   }
 
   if (
     lower === 'claude.md' ||
     lower === 'agents.md' ||
+    lower === 'gemini.md' ||
     lower === '.cursorrules' ||
     lower === '.windsurfrules' ||
+    lower === '.clinerules' ||
+    lower === '.goosehints' ||
     lower === 'copilot-instructions.md' ||
-    (normalized.includes('/rules/') && lower.endsWith('.md'))
+    (normalized.includes('/rules/') && (lower.endsWith('.md') || lower.endsWith('.mdc')))
   ) {
     return 'agent-instructions';
   }
 
   if (
-    (normalized.includes('/.claude/') || normalized.includes('/.cursor/') || normalized.includes('/.gemini/')) &&
+    (normalized.includes('/.claude/') ||
+      normalized.includes('/.cursor/') ||
+      normalized.includes('/.gemini/') ||
+      normalized.includes('/.codex/')) &&
     (lower === 'settings.json' || lower === 'settings.local.json' || lower === 'config.json')
   ) {
     return 'agent-settings';
@@ -88,7 +198,11 @@ const BASE64_BLOB_RE = /\b(?:[A-Za-z0-9+/]{48,}={0,2})\b/;
 
 const EXFIL_SINK_RE = /\b(?:curl|wget|fetch|axios\.post|requests\.post|urllib\.request|nc\s+-)\b[^\n]{0,140}(?:\.env|id_rsa|aws\/credentials|process\.env|os\.environ|API_KEY|SECRET|TOKEN)/i;
 
-function redactSecretsInText(text: string): string {
+const INSECURE_MCP_URL_RE = /"(?:url|serverUrl|sseUrl|endpoint)"\s*:\s*"(http:\/\/(?!localhost\b|127\.0\.0\.1\b|0\.0\.0\.0\b|\[::1\])[^"]+|https?:\/\/[^"]*(?:ngrok-free\.app|ngrok\.io|trycloudflare\.com|localtunnel\.me|loca\.lt|serveo\.net)[^"]*)"/i;
+
+const PERSISTENCE_BACKDOOR_RE = /(?:(?:>>|>\s*|tee\s+-a?\s+|writeFile(?:Sync)?\s*\(|appendFile(?:Sync)?\s*\()[^\n]{0,90}(?:\.claude\/settings|CLAUDE\.md|\.cursor\/mcp\.json|\.cursorrules|\.mcp\.json|\.git\/hooks\/|LaunchAgents|crontab)|crontab\s+-)/i;
+
+export function redactSecretsInText(text: string): string {
   let out = text;
   for (const sp of SECRET_PATTERNS) {
     out = out.replace(new RegExp(sp.re.source, sp.re.flags.includes('g') ? sp.re.flags : sp.re.flags + 'g'), (m) =>
@@ -144,7 +258,7 @@ export function scanFileContent(
         'Hidden HTML Comment Prompt Injection',
         'critical',
         lineIdx,
-        `Hidden HTML comment contains covert agent directive: ${commentMatch[0].slice(0, 120).replace(/\s+/g, ' ')}`,
+        `Hidden HTML comment contains covert agent directive: ${redactSecretsInText(commentMatch[0]).slice(0, 120).replace(/\s+/g, ' ')}`,
         'CWE-1427',
       );
     }
@@ -158,7 +272,6 @@ export function scanFileContent(
       (category === 'skill-markdown' || category === 'agent-instructions' || category === 'mcp-server-code') &&
       INVISIBLE_UNICODE_RE.test(line)
     ) {
-      // Ignore BOM at byte 0 of file
       if (!(i === 0 && line.startsWith('\uFEFF') && !INVISIBLE_UNICODE_RE.test(line.slice(1)))) {
         const codePoints = [...line]
           .filter((ch) => INVISIBLE_UNICODE_RE.test(ch))
@@ -203,7 +316,7 @@ export function scanFileContent(
       for (const sp of SECRET_PATTERNS) {
         const m = sp.re.exec(line);
         if (m) {
-          const masked = m[0].slice(0, 8) + '...' + m[0].slice(-4);
+          const masked = m[0].length > 14 ? `${m[0].slice(0, 8)}…[REDACTED]…${m[0].slice(-4)}` : '[REDACTED]';
           push(
             'AHC-004',
             `Plaintext Secret (${sp.name})`,
@@ -218,7 +331,10 @@ export function scanFileContent(
 
     // AHC-005: Unpinned npx -y or curl | sh supply-chain execution
     if (
-      (category === 'mcp-config' || category === 'agent-hook' || category === 'skill-markdown' || category === 'agent-settings') &&
+      (category === 'mcp-config' ||
+        category === 'agent-hook' ||
+        category === 'skill-markdown' ||
+        category === 'agent-settings') &&
       UNPINNED_EXEC_RE.test(line)
     ) {
       push(
@@ -232,7 +348,10 @@ export function scanFileContent(
     }
 
     // AHC-006: Over-privileged agent permissions
-    if ((category === 'agent-settings' || category === 'mcp-config' || category === 'agent-hook') && OVERPRIVILEGED_RE.test(line)) {
+    if (
+      (category === 'agent-settings' || category === 'mcp-config' || category === 'agent-hook') &&
+      OVERPRIVILEGED_RE.test(line)
+    ) {
       push(
         'AHC-006',
         'Over-Privileged Agent / Unrestricted Host Access',
@@ -255,7 +374,7 @@ export function scanFileContent(
               'Obfuscated Base64 Command / Prompt Payload',
               'critical',
               i,
-              `Base64 payload decodes to suspicious directive: "${decoded.slice(0, 90).replace(/\s+/g, ' ')}"`,
+              `Base64 payload decodes to suspicious directive: "${redactSecretsInText(decoded).slice(0, 90).replace(/\s+/g, ' ')}"`,
               'CWE-506',
             );
           }
@@ -274,6 +393,39 @@ export function scanFileContent(
         i,
         'Outbound network call directly references environment variables or credential paths on the same line',
         'CWE-200',
+      );
+    }
+
+    // AHC-009: Insecure Remote MCP Transport / Ephemeral Tunnel
+    if (category === 'mcp-config') {
+      const urlMatch = INSECURE_MCP_URL_RE.exec(line);
+      if (urlMatch) {
+        push(
+          'AHC-009',
+          'Insecure Remote MCP Transport / Ephemeral Tunnel',
+          'high',
+          i,
+          `Remote MCP endpoint uses cleartext HTTP or ephemeral public tunnel (${urlMatch[1].slice(0, 80)})`,
+          'CWE-319',
+        );
+      }
+    }
+
+    // AHC-010: Agent Persistence & Config Backdooring
+    if (
+      (category === 'skill-markdown' ||
+        category === 'agent-instructions' ||
+        category === 'agent-hook' ||
+        category === 'mcp-server-code') &&
+      PERSISTENCE_BACKDOOR_RE.test(line)
+    ) {
+      push(
+        'AHC-010',
+        'Agent Persistence & Config Backdooring',
+        'critical',
+        i,
+        'Directive or script modifies agent configuration, git hooks, or OS scheduled tasks to establish persistence',
+        'CWE-912',
       );
     }
   }

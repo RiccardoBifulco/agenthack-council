@@ -1,0 +1,36 @@
+name: 🐛 Bug Report
+description: Report a crash, CLI issue, provider error, or broken UI behavior
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please never paste real API keys or sensitive tokens in public issues.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A concise description of the bug.
+      placeholder: Running `npx agenthack-council ...` threw an error when...
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Exact CLI Command
+      placeholder: npx agenthack-council . --provider ollama --prove
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment (OS & Node.js version)
+      placeholder: macOS 15.x / Node v22.20.0 / agenthack-council v0.2.0
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console Output / Error Stack
+      render: shell

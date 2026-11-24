@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Report a Security Vulnerability Privately
+    url: https://github.com/RiccardoBifulco/agenthack-council/security/advisories/new
+    about: Please report vulnerabilities in AgentHack Council privately via GitHub Security Advisories.
+  - name: 💬 Community Discussions & Q&A
+    url: https://github.com/RiccardoBifulco/agenthack-council/discussions
+    about: Share MCP audit results, ask questions, or discuss multi-model council setups.

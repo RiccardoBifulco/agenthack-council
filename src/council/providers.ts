@@ -10,6 +10,17 @@ export type ProviderName =
   | 'codex-cli'
   | 'gemini-cli';
 
+const VALID_PROVIDERS = new Set<ProviderName>([
+  'anthropic',
+  'openai',
+  'gemini',
+  'openrouter',
+  'ollama',
+  'claude-cli',
+  'codex-cli',
+  'gemini-cli',
+]);
+
 export interface LLMProviderConfig {
   provider: ProviderName;
   model: string;
@@ -17,9 +28,23 @@ export interface LLMProviderConfig {
   baseUrl?: string;
 }
 
+export function parseProviderSpec(spec: string): { provider: ProviderName; model?: string } {
+  const trimmed = spec.trim();
+  const colonIdx = trimmed.indexOf(':');
+  const rawProvider = (colonIdx === -1 ? trimmed : trimmed.slice(0, colonIdx)) as ProviderName;
+  const rawModel = colonIdx === -1 ? undefined : trimmed.slice(colonIdx + 1).trim() || undefined;
+  if (!VALID_PROVIDERS.has(rawProvider)) {
+    throw new Error(
+      `Unknown provider "${rawProvider}". Expected one of: ${[...VALID_PROVIDERS].join(', ')}`,
+    );
+  }
+  return { provider: rawProvider, model: rawModel };
+}
+
 function hasBinary(bin: string): boolean {
+  const lookupCmd = process.platform === 'win32' ? 'where' : 'which';
   try {
-    execFileSync('which', [bin], { stdio: 'ignore' });
+    execFileSync(lookupCmd, [bin], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -34,7 +59,7 @@ export function resolveProvider(
     return { provider: 'claude-cli', model: preferredModel || 'default' };
   }
   if (preferredProvider === 'codex-cli') {
-    return { provider: 'codex-cli', model: preferredModel || 'gpt-5-codex' };
+    return { provider: 'codex-cli', model: preferredModel || 'default' };
   }
   if (preferredProvider === 'gemini-cli') {
     return { provider: 'gemini-cli', model: preferredModel || 'default' };
@@ -50,15 +75,17 @@ export function resolveProvider(
   if ((!preferredProvider || preferredProvider === 'anthropic') && process.env.ANTHROPIC_API_KEY) {
     return {
       provider: 'anthropic',
-      model: preferredModel || 'claude-sonnet-4-20250514',
+      model: preferredModel || process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5',
       apiKey: process.env.ANTHROPIC_API_KEY,
+      baseUrl: (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, ''),
     };
   }
   if ((!preferredProvider || preferredProvider === 'openai') && process.env.OPENAI_API_KEY) {
     return {
       provider: 'openai',
-      model: preferredModel || 'gpt-4o-mini',
+      model: preferredModel || process.env.OPENAI_MODEL || 'gpt-4o-mini',
       apiKey: process.env.OPENAI_API_KEY,
+      baseUrl: (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, ''),
     };
   }
   if ((!preferredProvider || preferredProvider === 'gemini') && process.env.GEMINI_API_KEY) {
@@ -75,7 +102,7 @@ export function resolveProvider(
       apiKey: process.env.OPENROUTER_API_KEY,
     };
   }
-  if (process.env.OLLAMA_MODEL) {
+  if (!preferredProvider && process.env.OLLAMA_MODEL) {
     return {
       provider: 'ollama',
       model: preferredModel || process.env.OLLAMA_MODEL,
@@ -86,7 +113,7 @@ export function resolveProvider(
   // Zero-API-key subscription CLI auto-detection when explicitly running `--council llm`
   if (!preferredProvider) {
     if (hasBinary('claude')) return { provider: 'claude-cli', model: preferredModel || 'default' };
-    if (hasBinary('codex')) return { provider: 'codex-cli', model: preferredModel || 'gpt-5-codex' };
+    if (hasBinary('codex')) return { provider: 'codex-cli', model: preferredModel || 'default' };
     if (hasBinary('gemini')) return { provider: 'gemini-cli', model: preferredModel || 'default' };
   }
 
@@ -115,7 +142,8 @@ function runSubprocess(bin: string, args: string[], stdinInput?: string, timeout
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0 && !stdout.trim()) {
-        reject(new Error(`${bin} exited ${code}: ${stderr.slice(0, 200)}`));
+        const msg = (stderr || stdout).trim().replace(/\s+/g, ' ').slice(0, 180);
+        reject(new Error(`${bin} exited ${code}${msg ? `: ${msg}` : ''}`));
         return;
       }
       resolve(stdout);
@@ -131,10 +159,9 @@ function runSubprocess(bin: string, args: string[], stdinInput?: string, timeout
 function extractJsonObject(raw: string): string {
   const cleaned = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
   const lastBrace = cleaned.lastIndexOf('}');
-  if (lastBrace === -1) throw new Error(`No JSON object in response: ${cleaned.slice(0, 120)}`);
+  if (lastBrace === -1) throw new Error(`Non-JSON response: ${cleaned.replace(/\s+/g, ' ').slice(0, 120)}`);
   let depth = 0;
   let inStr = false;
-  let esc = false;
   for (let i = lastBrace; i >= 0; i--) {
     const ch = cleaned[i];
     if (inStr) {
@@ -149,7 +176,6 @@ function extractJsonObject(raw: string): string {
     else if (ch === '{') {
       depth -= 1;
       if (depth === 0) {
-        void esc;
         return cleaned.slice(i, lastBrace + 1);
       }
     }
@@ -171,7 +197,7 @@ export async function callLLMJson<T>(
     if (cfg.model && cfg.model !== 'default') args.push('--model', cfg.model);
     rawText = await runSubprocess('claude', args, combinedCliPrompt);
   } else if (cfg.provider === 'codex-cli') {
-    const args = ['exec', '--skip-git-repo-check'];
+    const args = ['exec', '--skip-git-repo-check', '--color', 'never'];
     if (cfg.model && cfg.model !== 'default') args.push('-m', cfg.model);
     args.push('-');
     rawText = await runSubprocess('codex', args, combinedCliPrompt);
@@ -180,7 +206,9 @@ export async function callLLMJson<T>(
     if (cfg.model && cfg.model !== 'default') args.push('-m', cfg.model);
     rawText = await runSubprocess('gemini', args);
   } else if (cfg.provider === 'anthropic') {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const base = cfg.baseUrl || 'https://api.anthropic.com';
+    const url = base.endsWith('/v1') ? `${base}/messages` : `${base}/v1/messages`;
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -202,7 +230,7 @@ export async function callLLMJson<T>(
     const url =
       cfg.provider === 'openrouter'
         ? 'https://openrouter.ai/api/v1/chat/completions'
-        : 'https://api.openai.com/v1/chat/completions';
+        : `${cfg.baseUrl || 'https://api.openai.com/v1'}/chat/completions`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {

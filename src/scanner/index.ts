@@ -19,12 +19,15 @@ const IGNORED_DIRS = new Set([
 
 const MAX_FILE_BYTES = 512 * 1024; // 512 KB
 
+const MCP_SERVER_CODE_MARKERS =
+  /(?:@modelcontextprotocol|ModelContextProtocol|FastMCP|McpServer|server\.tool\s*\(|addTool\s*\(|CallToolRequest|ListToolsRequest|@mcp\.tool)/i;
+
 export interface StaticScanResult {
   filesScanned: number;
   candidates: CandidateFinding[];
 }
 
-async function walkDir(rootDir: string, currentDir: string, out: string[], maxFiles = 1500): Promise<void> {
+async function walkDir(rootDir: string, currentDir: string, out: string[], maxFiles = 2000): Promise<void> {
   if (out.length >= maxFiles) return;
   let entries;
   try {
@@ -49,11 +52,17 @@ async function walkDir(rootDir: string, currentDir: string, out: string[], maxFi
 
 export async function discoverLocalAgentPaths(): Promise<string[]> {
   const home = os.homedir();
+  const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
   const candidates = [
     path.join(home, '.claude'),
     path.join(home, '.cursor'),
     path.join(home, '.codex'),
+    path.join(home, '.gemini', 'config'),
+    path.join(home, '.codeium', 'windsurf'),
+    path.join(home, '.continue'),
     path.join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+    path.join(home, '.config', 'Claude', 'claude_desktop_config.json'),
+    path.join(appData, 'Claude', 'claude_desktop_config.json'),
   ];
   const existing: string[] = [];
   for (const p of candidates) {
@@ -97,7 +106,6 @@ export async function runStaticScan(targetPaths: string[]): Promise<StaticScanRe
     const category = classifyFile(fullPath);
     if (!category) continue;
 
-    // For generic code files (.ts/.js/.py/.go), only scan if it looks MCP/agent-related to stay fast & high-signal
     let stat;
     try {
       stat = await fs.stat(fullPath);
@@ -113,10 +121,7 @@ export async function runStaticScan(targetPaths: string[]): Promise<StaticScanRe
       continue;
     }
 
-    if (
-      category === 'mcp-server-code' &&
-      !/(?:mcp|ModelContextProtocol|server\.tool|addTool|FastMCP|CallToolRequest|SKILL|CLAUDE|prompt)/i.test(content)
-    ) {
+    if (category === 'mcp-server-code' && !MCP_SERVER_CODE_MARKERS.test(content)) {
       continue;
     }
 

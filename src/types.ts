@@ -10,6 +10,16 @@ export type TargetCategory =
   | 'agent-settings'
   | 'agent-hook';
 
+export interface RuleMetadata {
+  id: string;
+  name: string;
+  cwe: string;
+  defaultSeverity: Severity;
+  securitySeverityScore: string;
+  shortDescription: string;
+  fullDescription: string;
+}
+
 export interface CandidateFinding {
   id: string;
   ruleId: string;
@@ -31,11 +41,13 @@ export interface CouncilReview {
     attackerControl: string;
     blastRadius: string;
     confidence: number;
+    modelUsed?: string;
   };
   skeptic: {
     counterArgument: string;
     mitigatingFactors: string[];
     falsePositiveLikelihood: number;
+    modelUsed?: string;
   };
   judge: {
     verdict: VerdictStatus;
@@ -43,10 +55,12 @@ export interface CouncilReview {
     confidence: number;
     rationale: string;
     minimalPatch?: string;
+    modelUsed?: string;
   };
   mode: 'llm' | 'heuristic';
   modelUsed: string;
   durationMs: number;
+  fallbackReason?: string;
 }
 
 export interface CanaryProof {
@@ -62,12 +76,14 @@ export interface EvaluatedFinding extends CandidateFinding {
 }
 
 export interface ScanReport {
+  version: string;
   targetPath: string;
   scannedAt: string;
   durationMs: number;
   filesScanned: number;
   councilMode: 'llm' | 'heuristic' | 'off';
   modelName: string;
+  fallbackWarning?: string;
   grade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
   score: number;
   summary: {

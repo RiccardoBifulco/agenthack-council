@@ -13,8 +13,20 @@ inputs:
     description: 'Council mode: auto | llm | heuristic | off'
     required: false
     default: 'auto'
+  provider:
+    description: 'Optional LLM provider (anthropic | openai | gemini | openrouter | ollama)'
+    required: false
+    default: ''
   prove:
     description: 'Run canary sandbox proof on confirmed findings'
+    required: false
+    default: 'true'
+  sarif-file:
+    description: 'Optional output path for SARIF 2.1.0 report (for GitHub Code Scanning)'
+    required: false
+    default: ''
+  fail-on-confirmed:
+    description: 'Exit with code 1 when confirmed exploitable findings are detected'
     required: false
     default: 'true'
 runs:
@@ -23,8 +35,24 @@ runs:
     - uses: actions/setup-node@v4
       with:
         node-version: '22'
-    - shell: bash
+    - name: Build AgentHack Council
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci && npm run build
+    - name: Run Adversarial Council Audit
+      shell: bash
       run: |
-        ProveFlag=""
-        if [ "${{ inputs.prove }}" = "true" ]; then ProveFlag="--prove"; fi
-        npx --yes agenthack-council "${{ inputs.path }}" --council "${{ inputs.council }}" $ProveFlag --fail-on-confirmed
+        ARGS=("${{ inputs.path }}" "--council" "${{ inputs.council }}")
+        if [ -n "${{ inputs.provider }}" ]; then
+          ARGS+=("--provider" "${{ inputs.provider }}")
+        fi
+        if [ "${{ inputs.prove }}" = "true" ]; then
+          ARGS+=("--prove")
+        fi
+        if [ -n "${{ inputs.sarif-file }}" ]; then
+          ARGS+=("--sarif" "--output" "${{ inputs.sarif-file }}")
+        fi
+        if [ "${{ inputs.fail-on-confirmed }}" = "true" ]; then
+          ARGS+=("--fail-on-confirmed")
+        fi
+        node "${{ github.action_path }}/dist/src/cli.js" "${ARGS[@]}"

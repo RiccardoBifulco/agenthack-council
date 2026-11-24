@@ -1,17 +1,50 @@
-name: CI
+name: CI & Self-Audit
+
 on:
   push:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
+    name: Test (Node ${{ matrix.node }} · ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm test
+      - run: npm run demo
+      - run: npm run self-audit
+
+  code-scanning:
+    name: SARIF Self-Audit (GitHub Security)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
       - run: npm ci
-      - run: npm test
-      - run: npm run demo
+      - run: npm run build
+      - name: Generate SARIF 2.1.0 Report
+        run: node dist/src/cli.js . --council heuristic --prove --sarif --output agenthack-council.sarif --fail-on-confirmed
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: agenthack-council.sarif

@@ -1,106 +1,203 @@
-# ⚡ AgentHack Council
+<div align="center">
 
-**The Adversarial AI Security Harness (`Advocate → Skeptic → Judge` + Canary Proof) for AI Agents, MCP Servers, `SKILL.md`, and Agentic Repos.**
+<img src="./docs/assets/hero-banner.svg" alt="AgentHack Council — Adversarial AI Security Harness" width="100%" />
 
-> **Zero runtime npm dependencies.** Scans your local `~/.claude` / `~/.cursor` setup or any repository in milliseconds, deliberates suspicious findings through a 3-role adversarial Model Council to kill false positives, and launches a dark-mode local Web UI.
+<br />
 
----
+[![CI & Self-Audit](https://github.com/RiccardoBifulco/agenthack-council/actions/workflows/ci.yml/badge.svg)](https://github.com/RiccardoBifulco/agenthack-council/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/RiccardoBifulco/agenthack-council?color=7c3aed&label=release)](https://github.com/RiccardoBifulco/agenthack-council/releases)
+[![Zero Runtime Dependencies](https://img.shields.io/badge/dependencies-0-10b981)](./package.json)
+[![SARIF 2.1.0](https://img.shields.io/badge/SARIF-2.1.0-38bdf8)](./src/ui/sarif.ts)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18.18-339933)](./package.json)
+[![License: MIT](https://img.shields.io/badge/License-MIT-f59e0b.svg)](./LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-a78bfa.svg)](./CONTRIBUTING.md)
 
-## Why AgentHack Council?
+**The Adversarial AI Security Harness (`Advocate → Skeptic → Judge` + Canary Sandbox Proof) for AI Coding Agents, MCP Servers, `SKILL.md`, and Agentic Repositories.**
 
-Traditional regex scanners fail miserably on AI agent ecosystems (`SKILL.md`, `CLAUDE.md`, `.cursorrules`, `.mcp.json`, MCP servers): **every legitimate skill mentions `bash`, `curl`, prompts, or environment variables**, producing 90% false positives.
+[Quickstart](#-quickstart-zero-install) · [Why a Model Council?](#-why-a-model-council) · [10 Threat Rules](#-10-built-in-agent--mcp-threat-rules) · [Zero-Key & Cross-Model LLMs](#-zero-api-key-cli--cross-model-council) · [GitHub Action & SARIF](#-github-action--code-scanning-sarif-210) · [Security Guarantees](#-security--privacy-guarantees)
 
-**AgentHack Council** runs a 3-stage adversarial security pipeline purpose-built for coding agents and MCP:
-
-```text
-Target (.mcp.json / SKILL.md / CLAUDE.md / MCP code)
-   │
-   ▼
-[Stage 1: Fast Deterministic Recon (<50ms)]
-   │  AHC-001 Invisible Unicode / Bidi Prompt Smuggling
-   │  AHC-002 Hidden HTML Comment & Markdown Image Exfil
-   │  AHC-003 MCP Tool Poisoning & Covert Directives
-   │  AHC-004 Plaintext Secrets in Agent/MCP Configs
-   │  AHC-005 Unpinned `npx -y` / Pipe-to-Shell Supply Chain
-   │  AHC-006 Over-Privileged Host Mounts & Wildcard Approvals
-   │  AHC-007 Obfuscated Base64 Command/Prompt Payloads
-   │  AHC-008 Credential + Outbound Network Exfiltration Sinks
-   ▼
-[Stage 2: Adversarial Model Council]
-   ├── 🔴 Advocate: Builds the concrete exploit chain & blast radius
-   ├── 🔵 Skeptic:  Challenges false positives (fenced docs, placeholders, sandboxes)
-   └── ⚖️  Judge:    Renders CONFIRMED | UNCERTAIN | DISMISSED + Minimal Unified Diff Patch
-                    (Withholds confirmation when Advocate & Skeptic disagree!)
-   ▼
-[Stage 3: Ephemeral Canary Sandbox Prover (--prove)]
-   └── Verifies whether confirmed payloads target canary .env / .ssh/id_rsa traps
-```
+</div>
 
 ---
 
-## Quickstart (Zero Install)
+## ⚡ Quickstart (Zero Install)
 
-Try the built-in interactive demo (spawns a temporary poisoned + benign workspace to watch the Council confirm real attacks and dismiss false positives):
+Run the interactive demo right now — it spins up an ephemeral workspace with poisoned MCP tools, smuggled Unicode instructions, and benign security docs so you can watch the Council **confirm real exploits** and **dismiss false positives**:
 
 ```bash
-# Terminal report
-npx agenthack-council demo
+# Terminal report (runs in <20ms, zero API keys required)
+npx github:RiccardoBifulco/agenthack-council demo
 
-# Launch the interactive dark-mode Web Dashboard
-npx agenthack-council demo --ui
+# Launch the interactive dark-mode Web Dashboard on http://127.0.0.1:4317
+npx github:RiccardoBifulco/agenthack-council demo --ui
 ```
 
-Scan your own machine's Claude Code / Cursor / Codex setup or any repo before installing a skill or MCP server:
+Audit your own machine's **Claude Code, Cursor, Codex, Gemini, Windsurf, or Claude Desktop** setup — or scan any third-party skill / MCP repo before installing it:
 
 ```bash
-# Auto-discovers ~/.claude, ~/.cursor, ~/.codex, and Claude Desktop MCP config
-npx agenthack-council --prove
+# Auto-discovers ~/.claude, ~/.cursor, ~/.codex, ~/.gemini/config, Windsurf & Claude Desktop
+npx github:RiccardoBifulco/agenthack-council --prove
 
-# Scan a specific skill or MCP server repository with the Web UI
-npx agenthack-council ./path/to/mcp-server --prove --ui
+# Audit a third-party MCP server or skill repo and open the Web UI
+npx github:RiccardoBifulco/agenthack-council ./path/to/mcp-server --prove --ui
 ```
+
+<div align="center">
+  <img src="./docs/assets/terminal-demo.svg" alt="AgentHack Council Terminal Output" width="100%" />
+</div>
 
 ---
 
-## Multi-Provider LLM Council (Zero API Key via CLI Subscriptions, or Bring Your Own Key)
+## 🧠 Why a Model Council?
+
+Traditional regex scanners fail on AI agent ecosystems (`SKILL.md`, `CLAUDE.md`, `.cursor/rules/*.mdc`, `.mcp.json`, MCP servers) because **every legitimate skill mentions `bash`, `curl`, prompts, or environment variables** — creating 90% false-positive noise. Single-prompt LLM scanners swing the other way: they hallucinate severity or leak raw `.mcp.json` secrets to external APIs.
+
+| Capability | Regex / Static Scanners | Single-LLM Scanners | **AgentHack Council** |
+| :--- | :---: | :---: | :---: |
+| Speed on clean files (`2,500+` files) | ✅ `<50ms` | ❌ Slow & expensive | ✅ **`<50ms` Stage-1 filter** |
+| Distinguishes malicious `SKILL.md` vs anti-pattern docs | ❌ 90% False Positives | ⚠️ Inconsistent | ✅ **Advocate vs Skeptic debate** |
+| Withholds confirmation when evidence is ambiguous | ❌ Binary alert spam | ❌ Overconfident | ✅ **`UNCERTAIN` verdict tier** |
+| Raw secret protection before LLM calls | N/A | ❌ Often leaks keys | ✅ **Stage-1 pre-redaction** |
+| Subscription CLI reuse (`claude`, `codex`, `gemini`) | N/A | ❌ API key required | ✅ **Zero extra API bill** |
+| GitHub Security Tab (`SARIF 2.1.0`) + Canary Proof | ⚠️ Partial | ❌ Rare | ✅ **Built-in (`--sarif`, `--prove`)** |
+| Runtime npm supply-chain dependencies | Many | Many | ✅ **Zero (`0` dependencies)** |
+
+### Interactive Dark-Mode Web Dashboard (`--ui`)
+
+Inspect offensive **Advocate** briefs, **Skeptic** counter-arguments, **Judge** unified diff remediation patches, and **Canary Sandbox** proofs side by side — with instant `SARIF` and `JSON` export:
+
+<div align="center">
+  <img src="./docs/assets/web-dashboard.svg" alt="AgentHack Council Interactive Web Dashboard" width="100%" />
+</div>
+
+---
+
+## 🛡️ 10 Built-in Agent & MCP Threat Rules
+
+Run `npx github:RiccardoBifulco/agenthack-council rules` at any time to inspect the full rule catalog:
+
+| Rule ID | Threat Vector | CWE | Default Severity | Target Scope |
+| :--- | :--- | :---: | :---: | :--- |
+| **`AHC-001`** | **Invisible Unicode / Bidi Prompt Smuggling** *(excludes ZWJ compound emojis)* | `CWE-451` | `CRITICAL` | `SKILL.md`, `CLAUDE.md`, `.mdc`, MCP code |
+| **`AHC-002`** | **Hidden HTML Comment Directive & Zero-Click Markdown Image Exfil** | `CWE-1427` | `CRITICAL` | `SKILL.md`, `CLAUDE.md`, `.cursorrules` |
+| **`AHC-003`** | **MCP Tool Poisoning & Shadow Agent Instructions** | `CWE-1427` | `CRITICAL` | MCP tool definitions, `SKILL.md`, rules |
+| **`AHC-004`** | **Plaintext Secrets in Agent / MCP Configurations** *(auto-redacted)* | `CWE-798` | `CRITICAL` | `.mcp.json`, `settings.json`, skills |
+| **`AHC-005`** | **Unpinned `npx -y` Package / Pipe-to-Shell Execution** | `CWE-829` | `HIGH` | `.mcp.json`, hooks, `SKILL.md` |
+| **`AHC-006`** | **Over-Privileged Agent Permissions & Root/Home Host Mounts** | `CWE-250` | `HIGH` | `settings.json`, `.mcp.json`, hooks |
+| **`AHC-007`** | **Obfuscated Base64 Command / Prompt Override Payload** | `CWE-506` | `CRITICAL` | `SKILL.md`, `CLAUDE.md`, hooks |
+| **`AHC-008`** | **Credential + Outbound Network Exfiltration Sink** | `CWE-200` | `CRITICAL` | All agent & MCP server code |
+| **`AHC-009`** | **Insecure Cleartext Remote MCP URL / Ephemeral Public Tunnel** | `CWE-319` | `HIGH` | `.mcp.json`, `mcp_config.json` |
+| **`AHC-010`** | **Cross-Session Agent Persistence & Config/Hook Backdooring** | `CWE-912` | `CRITICAL` | Skills, rules, hooks, MCP code |
+
+---
+
+## 🤝 Zero-API-Key CLI & Cross-Model Council
 
 Out of the box, `agenthack-council` runs an instant offline context-aware council (`council-heuristic-v1`).
 
-Already logged into **Claude Code**, **Codex**, or **Gemini CLI** with your subscription? Run the live 3-agent LLM council (`Advocate → Skeptic → Judge`) **without paying for a separate API key**:
+### 1. Reuse Your Existing Coding CLI Login (Zero API Key!)
+
+Already logged into **Claude Code**, **OpenAI Codex**, or **Gemini CLI**? Run the live 3-agent LLM council without paying for separate API keys:
 
 ```bash
-# Use your existing Claude Code CLI login (zero API key!)
-npx agenthack-council . --provider claude-cli --prove --ui
+# Use your existing Claude Code subscription login
+npx github:RiccardoBifulco/agenthack-council . --provider claude-cli --prove --ui
 
 # Use your existing OpenAI Codex CLI login
-npx agenthack-council . --provider codex-cli --prove --ui
+npx github:RiccardoBifulco/agenthack-council . --provider codex-cli --prove --ui
 
-# Or run 100% locally via Ollama
-npx agenthack-council . --provider ollama --model qwen2.5-coder:14b --ui
+# Or run 100% air-gapped on local weights via Ollama
+npx github:RiccardoBifulco/agenthack-council . --provider ollama --model qwen2.5-coder:14b --ui
 ```
 
-Or pass any standard API key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`) and `--council auto` upgrades automatically:
+### 2. Cross-Model Adversarial Council (`Advocate` vs `Skeptic` vs `Judge`)
+
+Eliminate single-model blind spots by pitting **different model families** against each other:
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-... npx agenthack-council . --prove --ui
+npx github:RiccardoBifulco/agenthack-council ./mcp-server \
+  --advocate claude-cli:sonnet \
+  --skeptic codex-cli:o4-mini \
+  --judge ollama:qwen2.5-coder:14b \
+  --prove --ui
+```
+
+### 3. Standard API Keys & AI Gateways
+
+Pass `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTER_API_KEY` (plus optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` for LiteLLM, Vercel AI Gateway, or Cloudflare AI Gateway) and `--council auto` upgrades automatically:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... npx github:RiccardoBifulco/agenthack-council . --prove
 ```
 
 ---
 
-## GitHub Action (CI/CD Gate for Agentic Repos)
+## 🔄 GitHub Action & Code Scanning (`SARIF 2.1.0`)
 
-Block poisoned `SKILL.md` PRs, leaked `.mcp.json` keys, and hidden Unicode prompt injections in CI:
+Block poisoned `SKILL.md` PRs, leaked `.mcp.json` keys, and hidden Unicode prompt injections in CI — and publish confirmed findings directly to the **GitHub Security → Code Scanning** tab (`DISMISSED` false positives are automatically suppressed!):
 
 ```yaml
-- name: Audit Agent Skills & MCP Configs
-  uses: RiccardoBifulco/agenthack-council@v0.1.0
-  with:
-    path: '.'
-    prove: 'true'
+name: Agent Security Audit
+on: [push, pull_request]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  agenthack-council:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run AgentHack Council
+        uses: RiccardoBifulco/agenthack-council@v0.2.0
+        with:
+          path: '.'
+          prove: 'true'
+          sarif-file: 'agenthack-council.sarif'
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'agenthack-council.sarif'
 ```
 
 ---
 
-## License
+## 🔒 Security & Privacy Guarantees
 
-MIT © [Riccardo Bifulco](https://github.com/RiccardoBifulco)
+Scanning `~/.claude`, `~/.cursor`, and `.mcp.json` requires strict trust boundaries. See [`SECURITY.md`](./SECURITY.md) for full details:
+
+1. **Zero Runtime npm Dependencies:** Built purely on Node.js (`>= 18.18`) standard library modules — zero transitive npm packages to audit or trust.
+2. **Stage-1 Secret Pre-Redaction:** Raw tokens matched by `AHC-004` are masked (`sk-ant-a…[REDACTED]…N7p6`) in Stage 1 **before** `contextWindow` or `snippet` ever reaches an LLM Council prompt, terminal log, JSON file, or SARIF artifact.
+3. **Loopback-Only Binding (`127.0.0.1`):** Both the `--ui` web server and Canary Sandbox listener bind strictly to `127.0.0.1`.
+4. **Non-Executing Canary Prover:** `--prove` verifies credential and exfiltration targets against synthetic canary traps in an isolated temporary directory without executing untrusted repo code.
+
+---
+
+## 🛠️ Programmatic TypeScript / ESM API
+
+```ts
+import { runAudit, buildSarifReport } from 'agenthack-council';
+
+const report = await runAudit({
+  targets: ['./skills', './.mcp.json'],
+  councilMode: 'auto',
+  prove: true,
+});
+
+console.log(report.grade, report.summary);
+const sarif = buildSarifReport(report);
+```
+
+---
+
+## 🤝 Contributing
+
+Contributions of new `AHC-0XX` rules, Skeptic false-positive heuristics, and provider integrations are welcome! Read [`CONTRIBUTING.md`](./CONTRIBUTING.md) to get started in under 2 minutes.
+
+## 📄 License
+
+[MIT](./LICENSE) © [Riccardo Bifulco](https://github.com/RiccardoBifulco)
