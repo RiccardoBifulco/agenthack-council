@@ -94,6 +94,11 @@ test('Stage 1 auto-redacts plaintext secrets so raw keys never appear in snippet
 });
 
 test('parseProviderSpec supports Cross-Model Council provider[:model] specs', () => {
+  assert.deepEqual(parseProviderSpec('antigravity'), { provider: 'agy-cli', model: undefined });
+  assert.deepEqual(parseProviderSpec('agy-cli:gemini-4-hydrogen-medium'), {
+    provider: 'agy-cli',
+    model: 'gemini-4-hydrogen-medium',
+  });
   assert.deepEqual(parseProviderSpec('claude-cli'), { provider: 'claude-cli', model: undefined });
   assert.deepEqual(parseProviderSpec('claude-cli:sonnet'), { provider: 'claude-cli', model: 'sonnet' });
   assert.deepEqual(parseProviderSpec('ollama:qwen2.5-coder:14b'), {

@@ -1,5 +1,5 @@
 import { deliberateFinding, isFastDismissableCandidate, runHeuristicCouncil } from './council/index.js';
-import type { ProviderName } from './council/providers.js';
+import { closeActiveProviderSessions, type ProviderName } from './council/providers.js';
 import { runCanaryProof } from './prover/index.js';
 import { discoverLocalAgentPaths, runStaticScan } from './scanner/index.js';
 import { RULES_CATALOG } from './scanner/rules.js';
@@ -74,63 +74,67 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
   let circuitBrokenReason: string | undefined;
   let llmCount = 0;
 
-  for (let i = 0; i < candidates.length; i++) {
-    const c = candidates[i];
-    let council;
+  try {
+    for (let i = 0; i < candidates.length; i++) {
+      const c = candidates[i];
+      let council;
 
-    if (councilModePref === 'off') {
-      council = undefined;
-    } else if (!wantsLlm || circuitBrokenReason) {
-      council = runHeuristicCouncil(c);
-      if (circuitBrokenReason) {
-        council.fallbackReason = circuitBrokenReason;
-      }
-    } else if (!options.strictLlm && isFastDismissableCandidate(c)) {
-      council = runHeuristicCouncil(c);
-    } else if (llmCount >= maxLlm && !options.strictLlm) {
-      council = runHeuristicCouncil(c);
-    } else {
-      llmCount += 1;
-      const providerLabel =
-        options.provider || options.advocateSpec || options.skepticSpec || options.judgeSpec || 'auto-llm';
-      progress?.(
-        `Council deliberating [${llmCount}/${Math.min(maxLlm, candidates.length)}] ${c.ruleId} in ${c.relativePath}:${c.line} via ${providerLabel}...`,
-      );
-      council = await deliberateFinding(c, {
-        mode: councilModePref,
-        provider: options.provider,
-        model: options.model,
-        advocateSpec: options.advocateSpec,
-        skepticSpec: options.skepticSpec,
-        judgeSpec: options.judgeSpec,
-        strictLlm: options.strictLlm,
-      });
+      if (councilModePref === 'off') {
+        council = undefined;
+      } else if (!wantsLlm || circuitBrokenReason) {
+        council = runHeuristicCouncil(c);
+        if (circuitBrokenReason) {
+          council.fallbackReason = circuitBrokenReason;
+        }
+      } else if (!options.strictLlm && isFastDismissableCandidate(c)) {
+        council = runHeuristicCouncil(c);
+      } else if (llmCount >= maxLlm && !options.strictLlm) {
+        council = runHeuristicCouncil(c);
+      } else {
+        llmCount += 1;
+        const providerLabel =
+          options.provider || options.advocateSpec || options.skepticSpec || options.judgeSpec || 'auto-llm';
+        progress?.(
+          `Council deliberating [${llmCount}/${Math.min(maxLlm, candidates.length)}] ${c.ruleId} in ${c.relativePath}:${c.line} via ${providerLabel}...`,
+        );
+        council = await deliberateFinding(c, {
+          mode: councilModePref,
+          provider: options.provider,
+          model: options.model,
+          advocateSpec: options.advocateSpec,
+          skepticSpec: options.skepticSpec,
+          judgeSpec: options.judgeSpec,
+          strictLlm: options.strictLlm,
+        });
 
-      // Trip circuit breaker immediately if LLM provider failed so we never hang retrying a dead/quota-empty CLI
-      if (council?.fallbackReason) {
-        circuitBrokenReason = council.fallbackReason;
-        if (!fallbackWarning) {
-          fallbackWarning = council.fallbackReason;
-          progress?.(`⚠ ${fallbackWarning}`);
+        // Trip circuit breaker immediately if LLM provider failed so we never hang retrying a dead/quota-empty CLI
+        if (council?.fallbackReason) {
+          circuitBrokenReason = council.fallbackReason;
+          if (!fallbackWarning) {
+            fallbackWarning = council.fallbackReason;
+            progress?.(`⚠ ${fallbackWarning}`);
+          }
         }
       }
-    }
 
-    if (council) {
-      if (council.mode === 'llm') {
-        actualMode = 'llm';
-        modelName = council.modelUsed;
+      if (council) {
+        if (council.mode === 'llm') {
+          actualMode = 'llm';
+          modelName = council.modelUsed;
+        }
+        if (council.fallbackReason && !fallbackWarning) {
+          fallbackWarning = council.fallbackReason;
+        }
       }
-      if (council.fallbackReason && !fallbackWarning) {
-        fallbackWarning = council.fallbackReason;
-      }
-    }
 
-    const item: EvaluatedFinding = { ...c, council };
-    if (options.prove && (council?.judge.verdict ?? 'CONFIRMED') === 'CONFIRMED') {
-      item.proof = await runCanaryProof(item);
+      const item: EvaluatedFinding = { ...c, council };
+      if (options.prove && (council?.judge.verdict ?? 'CONFIRMED') === 'CONFIRMED') {
+        item.proof = await runCanaryProof(item);
+      }
+      evaluated[i] = item;
     }
-    evaluated[i] = item;
+  } finally {
+    closeActiveProviderSessions();
   }
 
   const bySeverity: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };

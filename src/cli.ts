@@ -20,7 +20,7 @@ Usage:
   npx agenthack-council rules
 
 Options:
-  --provider <name>       Zero-key CLI or API provider: claude-cli | codex-cli | gemini-cli | ollama | anthropic | openai | gemini | openrouter
+  --provider <name>       Zero-key CLI or API provider: antigravity (agy-cli) | claude-cli | codex-cli | gemini-cli | ollama | anthropic | openai | gemini | openrouter
   --model <name>          Override model name (e.g. sonnet, o4-mini, qwen2.5-coder:14b)
   --advocate <spec>       Per-role provider[:model] override (e.g. claude-cli:sonnet)
   --skeptic <spec>        Per-role provider[:model] override (e.g. codex-cli:o4-mini)

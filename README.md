@@ -103,6 +103,9 @@ Already logged into **Claude Code**, **OpenAI Codex**, or **Gemini CLI**? Run th
 # Use your existing Claude Code subscription login
 npx github:RiccardoBifulco/agenthack-council . --provider claude-cli --prove --ui
 
+# Use your existing Google Antigravity (`agy`) login — persistent warm stream-json Council!
+npx github:RiccardoBifulco/agenthack-council . --provider antigravity --prove --ui
+
 # Use your existing OpenAI Codex CLI login
 npx github:RiccardoBifulco/agenthack-council . --provider codex-cli --prove --ui
 

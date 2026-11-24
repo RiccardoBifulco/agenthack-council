@@ -5,6 +5,11 @@ All notable changes to **AgentHack Council** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-11-24
+
+### Added
+- **Native Google Antigravity CLI Provider (`--provider antigravity` / `agy-cli`):** Added zero-API-key Council support powered by persistent `agy --input-format stream-json --output-format stream-json` NDJSON worker sessions (including `~/.local/bin/agy` auto-discovery and per-role heterogeneous model specs like `--advocate antigravity:gemini-4-hydrogen-medium --skeptic antigravity:gemini-4-argon-medium --judge antigravity:gemini-4-carbon-medium`).
+
 ## [0.2.2] - 2026-11-24
 
 ### Fixed
