@@ -38,6 +38,9 @@ export function runHeuristicCouncil(c: CandidateFinding): CouncilReview {
   const t0 = Date.now();
   const docContext = isInsideMarkdownCodeExample(c.contextWindow);
   const placeholder = isPlaceholderSecret(c.snippet);
+  const isTestFile = /(?:^|\/)(?:tests?|__tests__|spec|testdata|fixtures)\/|\.(?:test|spec)\.[a-z]+$/i.test(
+    c.relativePath.replace(/\\/g, '/'),
+  );
 
   // Advocate always builds the strongest offensive case
   const advocate = {
@@ -64,6 +67,9 @@ export function runHeuristicCouncil(c: CandidateFinding): CouncilReview {
 
   // Skeptic tries to disprove false positives
   const mitigatingFactors: string[] = [];
+  if (isTestFile) {
+    mitigatingFactors.push('Finding resides inside a test suite or fixture file rather than an active runtime agent path.');
+  }
   if (docContext && (c.category === 'skill-markdown' || c.category === 'agent-instructions')) {
     mitigatingFactors.push('Snippet appears adjacent to documentation/example markers or fenced code blocks.');
   }
@@ -75,13 +81,15 @@ export function runHeuristicCouncil(c: CandidateFinding): CouncilReview {
   }
 
   const fpLikelihood =
-    placeholder && c.ruleId === 'AHC-004'
-      ? 0.88
-      : docContext && c.ruleId !== 'AHC-001' && c.ruleId !== 'AHC-007'
-        ? 0.79
-        : c.ruleId === 'AHC-005' && c.category === 'skill-markdown'
-          ? 0.62
-          : 0.14;
+    isTestFile
+      ? 0.86
+      : placeholder && c.ruleId === 'AHC-004'
+        ? 0.88
+        : docContext && c.ruleId !== 'AHC-001' && c.ruleId !== 'AHC-007'
+          ? 0.79
+          : c.ruleId === 'AHC-005' && c.category === 'skill-markdown'
+            ? 0.62
+            : 0.14;
 
   const skeptic = {
     counterArgument:

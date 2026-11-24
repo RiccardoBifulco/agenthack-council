@@ -61,7 +61,8 @@ function getContextWindow(lines: string[], zeroIdx: number, radius = 3): string 
 }
 
 // Zero-width, bidi override, and Unicode tag characters used in prompt smuggling
-const INVISIBLE_UNICODE_RE = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u{E0000}-\u{E007F}]/u;
+// (Excludes U+200D ZWJ so standard compound emojis like 👨‍💻 / 🏃‍♂️ do not false-positive)
+const INVISIBLE_UNICODE_RE = /[\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u{E0000}-\u{E007F}]/u;
 
 const HTML_COMMENT_INJECTION_RE = /<!--[\s\S]*?(?:ignore\s+(?:all\s+|previous\s+|prior\s+)?instructions|system\s*prompt|do\s+not\s+mention|do\s+not\s+tell\s+the\s+user|read\s+[~./]+(?:ssh|aws|env)|curl\s+https?:\/\/|exfiltrat)/i;
 
@@ -87,6 +88,16 @@ const BASE64_BLOB_RE = /\b(?:[A-Za-z0-9+/]{48,}={0,2})\b/;
 
 const EXFIL_SINK_RE = /\b(?:curl|wget|fetch|axios\.post|requests\.post|urllib\.request|nc\s+-)\b[^\n]{0,140}(?:\.env|id_rsa|aws\/credentials|process\.env|os\.environ|API_KEY|SECRET|TOKEN)/i;
 
+function redactSecretsInText(text: string): string {
+  let out = text;
+  for (const sp of SECRET_PATTERNS) {
+    out = out.replace(new RegExp(sp.re.source, sp.re.flags.includes('g') ? sp.re.flags : sp.re.flags + 'g'), (m) =>
+      m.length > 14 ? `${m.slice(0, 8)}…[REDACTED]…${m.slice(-4)}` : '[REDACTED]',
+    );
+  }
+  return out;
+}
+
 export function scanFileContent(
   filePath: string,
   relativePath: string,
@@ -95,6 +106,7 @@ export function scanFileContent(
 ): CandidateFinding[] {
   const findings: CandidateFinding[] = [];
   const lines = content.split(/\r?\n/);
+  const safeLines = lines.map(redactSecretsInText);
   let seq = 0;
 
   const push = (
@@ -115,8 +127,8 @@ export function scanFileContent(
       filePath,
       relativePath,
       line: lineIdx + 1,
-      snippet: (lines[lineIdx] ?? '').trim().slice(0, 220),
-      contextWindow: getContextWindow(lines, lineIdx),
+      snippet: (safeLines[lineIdx] ?? '').trim().slice(0, 220),
+      contextWindow: getContextWindow(safeLines, lineIdx),
       evidence,
       cwe,
     });
