@@ -15,6 +15,23 @@ const IGNORED_DIRS = new Set([
   'venv',
   'vendor',
   'coverage',
+  '.tmp',
+  '.staging',
+  'backups',
+  'archivio',
+  '.cache',
+  '.npm',
+  '.pnpm-store',
+  '.yarn',
+  '.cargo',
+  '.rustup',
+  '.Trash',
+  'Library',
+  'Applications',
+  'Pictures',
+  'Music',
+  'Movies',
+  'Downloads',
 ]);
 
 const MAX_FILE_BYTES = 512 * 1024; // 512 KB
@@ -27,7 +44,7 @@ export interface StaticScanResult {
   candidates: CandidateFinding[];
 }
 
-async function walkDir(rootDir: string, currentDir: string, out: string[], maxFiles = 2000): Promise<void> {
+async function walkDir(rootDir: string, currentDir: string, out: string[], maxFiles = 3000): Promise<void> {
   if (out.length >= maxFiles) return;
   let entries;
   try {
@@ -38,6 +55,7 @@ async function walkDir(rootDir: string, currentDir: string, out: string[], maxFi
 
   for (const entry of entries) {
     if (out.length >= maxFiles) break;
+    if (entry.isSymbolicLink()) continue;
     if (IGNORED_DIRS.has(entry.name)) continue;
     const full = path.join(currentDir, entry.name);
     if (entry.isDirectory()) {

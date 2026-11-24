@@ -5,6 +5,19 @@ All notable changes to **AgentHack Council** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-11-24
+
+### Fixed
+- **Eliminated Real-World False Positives Across Installed Agent Plugins:**
+  - Added full-file CommonMark fenced code block tracking (`computeMarkdownFenceMap`) so long multi-screen code examples in `SKILL.md` / `CLAUDE.md` are reliably marked `inCodeFence` on every inner line.
+  - Tightened `AHC-008` (`EXFIL_SINK_RE`) to require actual network call syntax paired with credential file / raw env payload sinks rather than plain English prose (`fetch ... token`) or standard `Authorization: Bearer` headers.
+  - Tightened `AHC-010` (`PERSISTENCE_BACKDOOR_RE`) so angle-bracket placeholders (`<home>/.cursor/mcp.json`, `<name>`), arrow functions (`=>`), and source comments no longer trigger shell redirection false positives; added Go `_test.go` and Python `test_*.py` recognition.
+  - Tightened `AHC-003` (`TOOL_POISONING_RE`) so benign UI formatting guidelines (`"Do not show the user the helper's JSON output"`) no longer fire without covert sensitive targets.
+  - Evaluated localhost/example/template database URLs (`isPreRedactionPlaceholder`) *before* Stage-1 secret redaction so masked snippets preserve placeholder context for Skeptic dismissal.
+- **CLI Responsiveness, Isolation & Home-Directory Guard:**
+  - Running `agenthack-council .` from `~` now automatically targets active local agent directories (`~/.claude`, `~/.cursor`, `~/.codex`, `~/.gemini/config`, etc.) and skips OS/staging folders (`Library`, `Downloads`, `.tmp`, `.staging`, `backups`).
+  - Added live `stderr` scan & Council progress telemetry, an instant LLM circuit breaker on provider quota/auth failures, and sandboxed CLI flags (`claude --safe-mode`, `codex -c mcp_servers={}`, `gemini -e none`, `cwd: os.tmpdir()`) so CLI providers start in ~2s without booting external MCP servers.
+
 ## [0.2.0] - 2026-11-24
 
 ### Added

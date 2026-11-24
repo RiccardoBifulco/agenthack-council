@@ -33,6 +33,8 @@ export interface CandidateFinding {
   contextWindow: string;
   evidence: string;
   cwe: string;
+  inCodeFence?: boolean;
+  isPlaceholderHint?: boolean;
 }
 
 export interface CouncilReview {

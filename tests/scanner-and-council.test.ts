@@ -168,3 +168,74 @@ test('Self-audit dogfooding: agenthack-council repository itself has zero CONFIR
   });
   assert.equal(report.summary.confirmed, 0, `Expected 0 confirmed findings on self-audit, got ${report.summary.confirmed}`);
 });
+
+test('Real-world false-positive regression suite (Cloudflare, Vercel, Impeccable, Go comments, long fences)', async () => {
+  const tmpDir = await fs.mkdtemp(path.join(process.cwd(), '.tmp-fp-suite-'));
+  try {
+    // 1. Long 30-line fenced code block + English prose ("fetch ... token", "vercel curl ... token", "<name> ... .mcp.json")
+    const skillDir = path.join(tmpDir, 'skills', 'cloud-docs');
+    await fs.mkdir(skillDir, { recursive: true });
+    const fillerLines = Array.from({ length: 18 }, (_, idx) => `  const step${idx} = ${idx};`).join('\n');
+    await fs.writeFile(
+      path.join(skillDir, 'SKILL.md'),
+      [
+        '---',
+        'description: Access protected deployments. Use when curl or OIDC token auth is needed.',
+        'summary: Access protected Vercel URLs with vercel curl or a short-lived OIDC token',
+        '---',
+        '- fetch an eve agent run trace with tool calls and token usage',
+        '- Skills, commands (`vercel:<name>`), and `.mcp.json` servers are registered cleanly.',
+        '- Windows `<hash>` keys parent path, so `~/.claude/CLAUDE.md` stays isolated.',
+        '- Do not show the user the helper\'s JSON output; only the human-readable trend line.',
+        '',
+        '```typescript',
+        'export default {',
+        '  async scheduled(event, env) {',
+        fillerLines,
+        '    await fetch("https://api.cloudflare.com/client/v4/zones", { headers: { Authorization: `Bearer ${env.CF_API_TOKEN}` } });',
+        '    const localDb = "postgres://postgres:password@localhost:5432/dev";',
+        '    const dynamicDb = `postgres://${username}:${password}@${host}:${port}/db`;',
+        fillerLines,
+        '  }',
+        '};',
+        '```',
+      ].join('\n'),
+      'utf8',
+    );
+
+    // 2. Go MCP code comment with `<home>/.cursor/mcp.json` + Go `_test.go` file + hook `console.error`
+    const hooksDir = path.join(tmpDir, 'hooks');
+    await fs.mkdir(hooksDir, { recursive: true });
+    await fs.writeFile(
+      path.join(tmpDir, 'stdio_upstream.go'),
+      `package mcp\n// ModelContextProtocol paths:\n// 1. <home>/.cursor/mcp.json\n// 2. <workspace>/.mcp.json\n`,
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(tmpDir, 'stdio_builtin_test.go'),
+      `package mcp\n// ModelContextProtocol test\nfunc TestMcp() { os.WriteFile(".mcp.json", data, 0600) }\n`,
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(hooksDir, 'uninstall.js'),
+      `console.error('  npx -y github:example/tool -- --uninstall');\n`,
+      'utf8',
+    );
+
+    const report = await runAudit({
+      targets: [tmpDir],
+      councilMode: 'heuristic',
+      prove: true,
+    });
+
+    assert.equal(
+      report.summary.confirmed,
+      0,
+      `Expected 0 CONFIRMED false positives across real-world plugin docs, got ${report.summary.confirmed}: ${JSON.stringify(
+        report.findings.filter((f) => f.council?.judge.verdict === 'CONFIRMED').map((f) => `${f.ruleId}@${f.relativePath}:${f.line}`),
+      )}`,
+    );
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+});

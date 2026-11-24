@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
+import os from 'node:os';
 
 export type ProviderName =
   | 'anthropic'
@@ -120,14 +121,23 @@ export function resolveProvider(
   return null;
 }
 
-function runSubprocess(bin: string, args: string[], stdinInput?: string, timeoutMs = 45000): Promise<string> {
+function runSubprocess(bin: string, args: string[], stdinInput?: string, timeoutMs = 18000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    // Run inside os.tmpdir() so local CLI agents never auto-load untrusted .mcp.json / CLAUDE.md from target cwd
+    const child = spawn(bin, args, {
+      cwd: os.tmpdir(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, CI: '1', NO_COLOR: '1' },
+    });
     let stdout = '';
     let stderr = '';
+    let settled = false;
 
     const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       child.kill('SIGTERM');
+      setTimeout(() => child.kill('SIGKILL'), 400).unref();
       reject(new Error(`${bin} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
@@ -135,11 +145,15 @@ function runSubprocess(bin: string, args: string[], stdinInput?: string, timeout
     child.stderr.on('data', (d) => (stderr += String(d)));
 
     child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       reject(err);
     });
 
     child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       if (code !== 0 && !stdout.trim()) {
         const msg = (stderr || stdout).trim().replace(/\s+/g, ' ').slice(0, 180);
@@ -193,16 +207,16 @@ export async function callLLMJson<T>(
   const combinedCliPrompt = `${systemPrompt}\n\nIMPORTANT: Reply ONLY with a single raw JSON object. Do not wrap in markdown fences or add commentary.\n\n${userPrompt}`;
 
   if (cfg.provider === 'claude-cli') {
-    const args = ['-p', '--tools', ''];
+    const args = ['-p', '--safe-mode', '--tools', ''];
     if (cfg.model && cfg.model !== 'default') args.push('--model', cfg.model);
     rawText = await runSubprocess('claude', args, combinedCliPrompt);
   } else if (cfg.provider === 'codex-cli') {
-    const args = ['exec', '--skip-git-repo-check', '--color', 'never'];
+    const args = ['exec', '-c', 'mcp_servers={}', '--skip-git-repo-check', '--color', 'never'];
     if (cfg.model && cfg.model !== 'default') args.push('-m', cfg.model);
     args.push('-');
     rawText = await runSubprocess('codex', args, combinedCliPrompt);
   } else if (cfg.provider === 'gemini-cli') {
-    const args = ['-p', combinedCliPrompt];
+    const args = ['-e', 'none', '--allowed-mcp-server-names', '__none__', '-p', combinedCliPrompt];
     if (cfg.model && cfg.model !== 'default') args.push('-m', cfg.model);
     rawText = await runSubprocess('gemini', args);
   } else if (cfg.provider === 'anthropic') {

@@ -1,4 +1,4 @@
-import { deliberateFinding } from './council/index.js';
+import { deliberateFinding, isFastDismissableCandidate, runHeuristicCouncil } from './council/index.js';
 import type { ProviderName } from './council/providers.js';
 import { runCanaryProof } from './prover/index.js';
 import { discoverLocalAgentPaths, runStaticScan } from './scanner/index.js';
@@ -17,6 +17,8 @@ export interface AuditOptions {
   judgeSpec?: string;
   strictLlm?: boolean;
   prove?: boolean;
+  maxLlmFindings?: number;
+  onProgress?: (message: string) => void;
 }
 
 function computeScoreAndGrade(findings: EvaluatedFinding[]): {
@@ -40,39 +42,95 @@ function computeScoreAndGrade(findings: EvaluatedFinding[]): {
 
 export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> {
   const t0 = Date.now();
+  const progress = options.onProgress;
+
   const targets =
     options.targets && options.targets.length > 0 ? options.targets : await discoverLocalAgentPaths();
 
+  progress?.(`Scanning ${targets.length} target path(s) across 10 agent security rules...`);
+  const scanStart = Date.now();
   const { filesScanned, candidates } = await runStaticScan(targets);
-  const councilModePref = options.councilMode ?? 'auto';
+  const scanMs = Date.now() - scanStart;
+  progress?.(`Scanned ${filesScanned} agent/MCP files in ${scanMs}ms -> ${candidates.length} candidate(s)`);
 
-  const evaluated: EvaluatedFinding[] = [];
+  const councilModePref = options.councilMode ?? 'auto';
+  const wantsLlm =
+    councilModePref === 'llm' ||
+    Boolean(options.provider || options.advocateSpec || options.skepticSpec || options.judgeSpec) ||
+    (councilModePref === 'auto' &&
+      Boolean(
+        process.env.ANTHROPIC_API_KEY ||
+          process.env.OPENAI_API_KEY ||
+          process.env.GEMINI_API_KEY ||
+          process.env.OPENROUTER_API_KEY ||
+          process.env.OLLAMA_MODEL,
+      ));
+
+  const maxLlm = options.maxLlmFindings ?? 15;
+  const evaluated: EvaluatedFinding[] = new Array(candidates.length);
   let actualMode: ScanReport['councilMode'] = councilModePref === 'off' ? 'off' : 'heuristic';
   let modelName = councilModePref === 'off' ? 'none' : 'council-heuristic-v1';
   let fallbackWarning: string | undefined;
+  let circuitBrokenReason: string | undefined;
+  let llmCount = 0;
 
-  for (const c of candidates) {
-    const council = await deliberateFinding(c, {
-      mode: councilModePref,
-      provider: options.provider,
-      model: options.model,
-      advocateSpec: options.advocateSpec,
-      skepticSpec: options.skepticSpec,
-      judgeSpec: options.judgeSpec,
-      strictLlm: options.strictLlm,
-    });
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
+    let council;
+
+    if (councilModePref === 'off') {
+      council = undefined;
+    } else if (!wantsLlm || circuitBrokenReason) {
+      council = runHeuristicCouncil(c);
+      if (circuitBrokenReason) {
+        council.fallbackReason = circuitBrokenReason;
+      }
+    } else if (!options.strictLlm && isFastDismissableCandidate(c)) {
+      council = runHeuristicCouncil(c);
+    } else if (llmCount >= maxLlm && !options.strictLlm) {
+      council = runHeuristicCouncil(c);
+    } else {
+      llmCount += 1;
+      const providerLabel =
+        options.provider || options.advocateSpec || options.skepticSpec || options.judgeSpec || 'auto-llm';
+      progress?.(
+        `Council deliberating [${llmCount}/${Math.min(maxLlm, candidates.length)}] ${c.ruleId} in ${c.relativePath}:${c.line} via ${providerLabel}...`,
+      );
+      council = await deliberateFinding(c, {
+        mode: councilModePref,
+        provider: options.provider,
+        model: options.model,
+        advocateSpec: options.advocateSpec,
+        skepticSpec: options.skepticSpec,
+        judgeSpec: options.judgeSpec,
+        strictLlm: options.strictLlm,
+      });
+
+      // Trip circuit breaker immediately if LLM provider failed so we never hang retrying a dead/quota-empty CLI
+      if (council?.fallbackReason) {
+        circuitBrokenReason = council.fallbackReason;
+        if (!fallbackWarning) {
+          fallbackWarning = council.fallbackReason;
+          progress?.(`⚠ ${fallbackWarning}`);
+        }
+      }
+    }
+
     if (council) {
-      actualMode = council.mode;
-      modelName = council.modelUsed;
+      if (council.mode === 'llm') {
+        actualMode = 'llm';
+        modelName = council.modelUsed;
+      }
       if (council.fallbackReason && !fallbackWarning) {
         fallbackWarning = council.fallbackReason;
       }
     }
+
     const item: EvaluatedFinding = { ...c, council };
     if (options.prove && (council?.judge.verdict ?? 'CONFIRMED') === 'CONFIRMED') {
       item.proof = await runCanaryProof(item);
     }
-    evaluated.push(item);
+    evaluated[i] = item;
   }
 
   const bySeverity: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };

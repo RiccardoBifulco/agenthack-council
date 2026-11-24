@@ -17,14 +17,37 @@ export interface DeliberationOptions {
   strictLlm?: boolean;
 }
 
-function isInsideMarkdownCodeExample(contextWindow: string): boolean {
-  return /```|\b(?:anti-pattern|do not do|never do in production|example of bad|for example)\b/i.test(
-    contextWindow,
+function isInsideMarkdownCodeExample(c: CandidateFinding): boolean {
+  if (c.inCodeFence) return true;
+  return /```|~~~|\b(?:anti-pattern|do not do|never do in production|example of bad|for example)\b/i.test(
+    c.contextWindow,
   );
 }
 
-function isPlaceholderSecret(snippet: string): boolean {
-  return /(?:YOUR_|EXAMPLE|PLACEHOLDER|xxxx|000000|123456|changeme|dummy|test_key|fake)/i.test(snippet);
+function isPlaceholderSecret(c: CandidateFinding): boolean {
+  if (c.isPlaceholderHint) return true;
+  return /(?:YOUR_|EXAMPLE|PLACEHOLDER|xxxx|000000|123456|changeme|dummy|test_key|fake)/i.test(c.snippet);
+}
+
+export function isTestFilePath(relativePath: string): boolean {
+  const norm = relativePath.replace(/\\/g, '/');
+  return /(?:^|\/)(?:tests?|__tests__|__mocks__|spec|testdata|fixtures)\/|(?:_test\.go|_test\.py|(?:^|\/)test_[^/]+\.py|\.(?:test|spec)\.[a-z0-9]+)$/i.test(
+    norm,
+  );
+}
+
+export function isFastDismissableCandidate(c: CandidateFinding): boolean {
+  if (isTestFilePath(c.relativePath)) return true;
+  if (c.isPlaceholderHint && c.ruleId === 'AHC-004') return true;
+  if (
+    isInsideMarkdownCodeExample(c) &&
+    (c.category === 'skill-markdown' || c.category === 'agent-instructions') &&
+    c.ruleId !== 'AHC-001' &&
+    c.ruleId !== 'AHC-007'
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function buildMinimalPatch(c: CandidateFinding): string {
@@ -58,13 +81,10 @@ function buildMinimalPatch(c: CandidateFinding): string {
 
 export function runHeuristicCouncil(c: CandidateFinding): CouncilReview {
   const t0 = Date.now();
-  const docContext = isInsideMarkdownCodeExample(c.contextWindow);
-  const placeholder = isPlaceholderSecret(c.snippet);
-  const isTestFile = /(?:^|\/)(?:tests?|__tests__|spec|testdata|fixtures)\/|\.(?:test|spec)\.[a-z]+$/i.test(
-    c.relativePath.replace(/\\/g, '/'),
-  );
+  const docContext = isInsideMarkdownCodeExample(c);
+  const placeholder = isPlaceholderSecret(c);
+  const isTestFile = isTestFilePath(c.relativePath);
 
-  // Advocate always builds the strongest offensive case
   const advocate = {
     exploitScenario:
       c.ruleId === 'AHC-003'
@@ -88,20 +108,19 @@ export function runHeuristicCouncil(c: CandidateFinding): CouncilReview {
       c.initialSeverity === 'critical'
         ? 'Full credential theft (~/.ssh, ~/.aws, .env), persistent backdoor, or arbitrary host command execution'
         : 'Privilege escalation, traffic interception, or silent policy bypass inside the agent session',
-    confidence: docContext || placeholder ? 0.58 : 0.91,
+    confidence: docContext || placeholder || isTestFile ? 0.45 : 0.91,
     modelUsed: 'council-heuristic-v1',
   };
 
-  // Skeptic tries to disprove false positives
   const mitigatingFactors: string[] = [];
   if (isTestFile) {
     mitigatingFactors.push('Finding resides inside a test suite or fixture file rather than an active runtime agent path.');
   }
   if (docContext && (c.category === 'skill-markdown' || c.category === 'agent-instructions')) {
-    mitigatingFactors.push('Snippet appears adjacent to documentation/example markers or fenced code blocks.');
+    mitigatingFactors.push('Snippet resides inside a fenced Markdown code block or anti-pattern documentation example.');
   }
   if (placeholder) {
-    mitigatingFactors.push('Matched value resembles a documentation placeholder or dummy token.');
+    mitigatingFactors.push('Matched value is a localhost/example connection string, dummy token, or documentation placeholder.');
   }
   if (c.ruleId === 'AHC-005' && c.category === 'skill-markdown') {
     mitigatingFactors.push('Command appears in markdown prose rather than an auto-executed .mcp.json or hook.');
@@ -109,11 +128,11 @@ export function runHeuristicCouncil(c: CandidateFinding): CouncilReview {
 
   const fpLikelihood =
     isTestFile
-      ? 0.86
+      ? 0.88
       : placeholder && c.ruleId === 'AHC-004'
-        ? 0.88
+        ? 0.9
         : docContext && c.ruleId !== 'AHC-001' && c.ruleId !== 'AHC-007'
-          ? 0.79
+          ? 0.84
           : c.ruleId === 'AHC-005' && c.category === 'skill-markdown'
             ? 0.62
             : 0.14;
@@ -128,7 +147,6 @@ export function runHeuristicCouncil(c: CandidateFinding): CouncilReview {
     modelUsed: 'council-heuristic-v1',
   };
 
-  // Judge weighs Advocate vs Skeptic (withholds confirmation when ambiguous!)
   let verdict: VerdictStatus = 'CONFIRMED';
   let finalSeverity: Severity = c.initialSeverity;
   let confidence = 0.9;
@@ -136,7 +154,7 @@ export function runHeuristicCouncil(c: CandidateFinding): CouncilReview {
 
   if (fpLikelihood >= 0.75) {
     verdict = 'DISMISSED';
-    confidence = 0.85;
+    confidence = 0.86;
     rationale = `Skeptic demonstrated high likelihood of benign documentation/placeholder/test context (${Math.round(fpLikelihood * 100)}%). Dismissed to prevent alert fatigue.`;
   } else if (fpLikelihood >= 0.5) {
     verdict = 'UNCERTAIN';
@@ -179,6 +197,8 @@ export async function runLLMCouncil(
   const baseContext = [
     `Rule: ${c.ruleId} (${c.ruleName}) [${c.cwe}]`,
     `File: ${c.relativePath}:${c.line} (category: ${c.category})`,
+    `Inside Markdown Code Fence: ${c.inCodeFence ? 'yes' : 'no'}`,
+    `Placeholder/Localhost Hint: ${c.isPlaceholderHint ? 'yes' : 'no'}`,
     `Evidence: ${c.evidence}`,
     `Code Context (secrets pre-redacted):\n${c.contextWindow}`,
   ].join('\n');
@@ -191,14 +211,14 @@ export async function runLLMCouncil(
     ),
     callLLMJson<CouncilReview['skeptic']>(
       roles.skeptic,
-      'You are SKEPTIC on an AI Agent Security Model Council. Try to disprove false positives by checking if this is benign documentation, a fenced example, a dummy placeholder secret, a test fixture, or unreachable without user intent. Return JSON with keys: counterArgument (string), mitigatingFactors (string[]), falsePositiveLikelihood (number 0..1).',
+      'You are SKEPTIC on an AI Agent Security Model Council. Try to disprove false positives by checking if this is benign documentation, a fenced example, a dummy placeholder secret, a test fixture, or an ordinary user-intended CLI step. Return JSON with keys: counterArgument (string), mitigatingFactors (string[]), falsePositiveLikelihood (number 0..1).',
       baseContext,
     ),
   ]);
 
   const judge = await callLLMJson<CouncilReview['judge']>(
     roles.judge,
-    'You are JUDGE on an AI Agent Security Model Council. Read the source evidence, Advocate brief, and Skeptic brief. If Skeptic proves it is a benign example, test fixture, or placeholder, output verdict="DISMISSED". If Advocate and Skeptic reasonably disagree without clear proof, output verdict="UNCERTAIN". Otherwise output verdict="CONFIRMED". Return JSON with keys: verdict ("CONFIRMED"|"UNCERTAIN"|"DISMISSED"), finalSeverity ("critical"|"high"|"medium"|"low"), confidence (number 0..1), rationale (string), minimalPatch (optional unified diff string).',
+    'You are JUDGE on an AI Agent Security Model Council. Read the source evidence, Advocate brief, and Skeptic brief. If Skeptic proves it is a benign example, test fixture, placeholder, or ordinary documentation, output verdict="DISMISSED". If Advocate and Skeptic reasonably disagree without clear proof, output verdict="UNCERTAIN". Otherwise output verdict="CONFIRMED". Return JSON with keys: verdict ("CONFIRMED"|"UNCERTAIN"|"DISMISSED"), finalSeverity ("critical"|"high"|"medium"|"low"), confidence (number 0..1), rationale (string), minimalPatch (optional unified diff string).',
     `${baseContext}\n\nADVOCATE BRIEF:\n${JSON.stringify(advocate)}\n\nSKEPTIC BRIEF:\n${JSON.stringify(skeptic)}`,
   );
 
@@ -257,6 +277,12 @@ export async function deliberateFinding(
   );
 
   if (mode === 'auto' && !hasExplicitProvider && !hasEnvKey) {
+    return runHeuristicCouncil(c);
+  }
+
+  // Fast-path deterministic dismissal for fenced code examples, test files, and localhost placeholders
+  // so LLM calls are reserved for real ambiguous/active candidates.
+  if (!options.strictLlm && isFastDismissableCandidate(c)) {
     return runHeuristicCouncil(c);
   }
 
