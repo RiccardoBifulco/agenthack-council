@@ -35,6 +35,7 @@ Options:
   --sarif                 Output SARIF 2.1.0 report to stdout (for GitHub Code Scanning)
   -o, --output <file>     Write JSON or SARIF report to file (inferred from --sarif or .sarif ext)
   --fail-on-confirmed     Exit with code 1 if any finding is CONFIRMED (for CI / GitHub Actions)
+  --verbose               Print all dismissed false-positive details in CLI output
   -v, --version           Print version
   -h, --help              Show this help
 `);
@@ -65,6 +66,7 @@ async function main(): Promise<void> {
   let sarifOut = false;
   let outputFile: string | undefined;
   let failOnConfirmed = false;
+  let verbose = false;
   let port = 4317;
   const positional: string[] = [];
 
@@ -98,6 +100,8 @@ async function main(): Promise<void> {
       outputFile = args[++i];
     } else if (a === '--fail-on-confirmed') {
       failOnConfirmed = true;
+    } else if (a === '--verbose') {
+      verbose = true;
     } else if (a === '--port' && args[i + 1]) {
       port = Number(args[++i]) || 4317;
     } else if (!a.startsWith('-')) {
@@ -166,7 +170,7 @@ async function main(): Promise<void> {
     } else if (jsonOut && !outputFile) {
       console.log(JSON.stringify(report, null, 2));
     } else {
-      console.log(renderCliReport(report));
+      console.log(renderCliReport(report, { showDismissed: verbose }));
       if (outputFile) {
         console.log(`  📄 Report saved to ${outputFile}\n`);
       }

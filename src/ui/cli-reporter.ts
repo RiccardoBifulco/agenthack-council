@@ -57,7 +57,8 @@ export function renderRulesCatalog(): string {
   return lines.join('\n');
 }
 
-export function renderCliReport(report: ScanReport): string {
+export function renderCliReport(report: ScanReport, options?: { showDismissed?: boolean }): string {
+  const showDismissed = options?.showDismissed ?? false;
   const lines: string[] = [];
   const bar = `${C.gray}${'─'.repeat(78)}${C.reset}`;
 
@@ -86,7 +87,18 @@ export function renderCliReport(report: ScanReport): string {
     return lines.join('\n');
   }
 
-  for (const f of report.findings) {
+  const actionable = report.findings.filter((f) => (f.council?.judge.verdict ?? 'CONFIRMED') !== 'DISMISSED');
+  const dismissedCount = report.findings.length - actionable.length;
+  // Show dismissed in full if `--verbose` is passed OR if demo/small report (`<= 6` total findings)
+  const visibleFindings = showDismissed || report.findings.length <= 6 ? report.findings : actionable;
+
+  if (visibleFindings.length === 0 && dismissedCount > 0) {
+    lines.push(
+      `  ${C.green}${C.bold}✓ Zero actionable threats.${C.reset} All ${dismissedCount} static candidates were dismissed as benign examples/placeholders by the Council.`,
+    );
+  }
+
+  for (const f of visibleFindings) {
     const sev = f.council?.judge.finalSeverity ?? f.initialSeverity;
     lines.push('');
     lines.push(
@@ -111,6 +123,13 @@ export function renderCliReport(report: ScanReport): string {
       const icon = f.proof.triggeredCanary ? `${C.red}${C.bold}🧪 CANARY TRIGGERED${C.reset}` : `${C.green}🧪 Canary Safe${C.reset}`;
       lines.push(`     ${icon} ${C.gray}— ${f.proof.details}${C.reset}`);
     }
+  }
+
+  if (!showDismissed && report.findings.length > 6 && dismissedCount > 0) {
+    lines.push('');
+    lines.push(
+      `  ${C.green}✓ ${dismissedCount} benign documentation/placeholder false positive(s) suppressed${C.reset} ${C.gray}(pass --verbose or --ui to inspect)${C.reset}`,
+    );
   }
 
   lines.push('');

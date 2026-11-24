@@ -33,6 +33,7 @@ export interface LLMProviderConfig {
   model: string;
   apiKey?: string;
   baseUrl?: string;
+  roleSlot?: string;
 }
 
 function normalizeProviderAlias(p: ProviderName): ProviderName {
@@ -164,13 +165,13 @@ export function resolveProvider(
 }
 
 /**
- * Persistent warm NDJSON session for Google Antigravity CLI (`agy --input-format stream-json --output-format stream-json`).
- * Amortizes initial CLI / MCP startup across the entire audit so subsequent Council turns complete in ~1s.
+ * Persistent warm NDJSON worker for Google Antigravity CLI (`agy --input-format stream-json --output-format stream-json`).
+ * Pre-warming one worker per Council role (`advocate`, `skeptic`, `judge`) runs any MCP server initialization
+ * simultaneously in parallel rather than sequentially across roles.
  */
 class AgyStreamWorker {
   readonly model: string;
   dead = false;
-  private initialized = false;
   private queue: Promise<unknown> = Promise.resolve();
   private child: ChildProcessWithoutNullStreams;
   private buffer = '';
@@ -212,7 +213,6 @@ class AgyStreamWorker {
             result?: { status?: string; response?: string; error?: string };
           };
           if (evt.event === 'result' && evt.result) {
-            this.initialized = true;
             const res = evt.result;
             const resolve = this.pendingResolve;
             const reject = this.pendingReject;
@@ -257,19 +257,16 @@ class AgyStreamWorker {
     });
   }
 
-  enqueue(prompt: string): Promise<string> {
-    const next = this.queue.catch(() => undefined).then(() => this.askOnce(prompt));
+  enqueue(prompt: string, timeoutMs = 300000): Promise<string> {
+    const next = this.queue.catch(() => undefined).then(() => this.askOnce(prompt, timeoutMs));
     this.queue = next;
     return next;
   }
 
-  private askOnce(prompt: string): Promise<string> {
+  private askOnce(prompt: string, timeoutMs: number): Promise<string> {
     if (this.dead) {
       return Promise.reject(new Error('agy session closed'));
     }
-    // First turn in `agy` initializes configured MCP servers (which may wait on offline remote/NAS MCP timeouts);
-    // once Turn 1 completes, subsequent turns reuse the warm session in ~1-2s.
-    const timeoutMs = this.initialized ? 45000 : 360000;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.dead = true;
@@ -306,18 +303,45 @@ class AgyStreamWorker {
 
 const AGY_WORKERS = new Map<string, AgyStreamWorker>();
 
-async function runAgyPrompt(model: string, prompt: string): Promise<string> {
+function getOrCreateAgyWorker(slotKey: string, model: string): AgyStreamWorker {
   const agyBin = resolveBinaryPath('agy');
   if (!agyBin) {
-    throw new Error('Antigravity CLI (agy) not found. Install via: curl -fsSL https://antigravity.google/cli/install.sh | bash');
+    throw new Error(
+      'Antigravity CLI (agy) not found. Install via: curl -fsSL https://antigravity.google/cli/install.sh | bash',
+    );
   }
-
-  let worker = AGY_WORKERS.get(model);
+  const mapKey = `${slotKey}:${model}`;
+  let worker = AGY_WORKERS.get(mapKey);
   if (!worker || worker.dead) {
     worker = new AgyStreamWorker(agyBin, model);
-    AGY_WORKERS.set(model, worker);
+    AGY_WORKERS.set(mapKey, worker);
   }
+  return worker;
+}
 
+/**
+ * Spawns Advocate, Skeptic, and Judge `agy` workers concurrently at t=0 (including a tiny ping on Judge)
+ * so all three processes complete any MCP connection initialization in parallel before Judge is needed.
+ */
+export function prewarmRoleSessions(roles: {
+  advocate: LLMProviderConfig;
+  skeptic: LLMProviderConfig;
+  judge: LLMProviderConfig;
+}): void {
+  if (normalizeProviderAlias(roles.advocate.provider) === 'agy-cli') {
+    getOrCreateAgyWorker('advocate', roles.advocate.model);
+  }
+  if (normalizeProviderAlias(roles.skeptic.provider) === 'agy-cli') {
+    getOrCreateAgyWorker('skeptic', roles.skeptic.model);
+  }
+  if (normalizeProviderAlias(roles.judge.provider) === 'agy-cli') {
+    getOrCreateAgyWorker('judge', roles.judge.model);
+  }
+}
+
+async function runAgyPrompt(cfg: LLMProviderConfig, prompt: string): Promise<string> {
+  const slot = cfg.roleSlot || 'default';
+  const worker = getOrCreateAgyWorker(slot, cfg.model);
   return worker.enqueue(
     `[STATELESS JSON EVALUATION — DO NOT CALL ANY TOOLS, DO NOT READ FILES, REPLY IMMEDIATELY WITH ONE RAW JSON OBJECT ONLY]\n\n${prompt}`,
   );
@@ -330,7 +354,7 @@ export function closeActiveProviderSessions(): void {
   AGY_WORKERS.clear();
 }
 
-function runSubprocess(bin: string, args: string[], stdinInput?: string, timeoutMs = 18000): Promise<string> {
+function runSubprocess(bin: string, args: string[], stdinInput?: string, timeoutMs = 25000): Promise<string> {
   const resolvedBin = resolveBinaryPath(bin) || bin;
   return new Promise((resolve, reject) => {
     const child = spawn(resolvedBin, args, {
@@ -417,7 +441,7 @@ export async function callLLMJson<T>(
   const provider = normalizeProviderAlias(cfg.provider);
 
   if (provider === 'agy-cli') {
-    rawText = await runAgyPrompt(cfg.model, combinedCliPrompt);
+    rawText = await runAgyPrompt(cfg, combinedCliPrompt);
   } else if (provider === 'claude-cli') {
     const args = ['-p', '--safe-mode', '--tools', ''];
     if (cfg.model && cfg.model !== 'default') args.push('--model', cfg.model);
@@ -443,7 +467,7 @@ export async function callLLMJson<T>(
       },
       body: JSON.stringify({
         model: cfg.model,
-        max_tokens: 900,
+        max_tokens: 2400,
         temperature: 0.1,
         system: systemPrompt + '\nRespond ONLY with a valid JSON object. No markdown fences.',
         messages: [{ role: 'user', content: userPrompt }],

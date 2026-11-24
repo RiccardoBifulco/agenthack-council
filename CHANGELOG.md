@@ -5,6 +5,12 @@ All notable changes to **AgentHack Council** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-11-24
+
+### Improved
+- **2-Wave Parallel Batch LLM Council (`runLLMCouncilBatch`):** Evaluates all active non-fenced candidates in just two waves (`Wave 1: Parallel Advocate + Skeptic` isolated processes → `Wave 2: Judge`), cutting total CLI/API round-trips from `3 × N` down to `2` waves across an entire machine audit.
+- **Executive CLI Output Ordering & `--verbose`:** Sorts findings `CONFIRMED → UNCERTAIN → DISMISSED` by severity and summarizes benign dismissed false positives cleanly on a single footer line unless `--verbose` (or `--ui`) is passed.
+
 ## [0.2.3] - 2026-11-24
 
 ### Added

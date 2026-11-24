@@ -154,7 +154,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Run AgentHack Council
-        uses: RiccardoBifulco/agenthack-council@v0.2.0
+        uses: RiccardoBifulco/agenthack-council@v0.2.5
         with:
           path: '.'
           prove: 'true'

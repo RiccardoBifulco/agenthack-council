@@ -1,9 +1,14 @@
-import { deliberateFinding, isFastDismissableCandidate, runHeuristicCouncil } from './council/index.js';
+import {
+  isFastDismissableCandidate,
+  resolveCouncilRoles,
+  runHeuristicCouncil,
+  runLLMCouncilBatch,
+} from './council/index.js';
 import { closeActiveProviderSessions, type ProviderName } from './council/providers.js';
 import { runCanaryProof } from './prover/index.js';
 import { discoverLocalAgentPaths, runStaticScan } from './scanner/index.js';
 import { RULES_CATALOG } from './scanner/rules.js';
-import type { EvaluatedFinding, ScanReport, Severity } from './types.js';
+import type { CandidateFinding, EvaluatedFinding, ScanReport, Severity } from './types.js';
 import { buildSarifReport } from './ui/sarif.js';
 import { VERSION } from './version.js';
 
@@ -19,6 +24,21 @@ export interface AuditOptions {
   prove?: boolean;
   maxLlmFindings?: number;
   onProgress?: (message: string) => void;
+}
+
+const SEV_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const VERDICT_RANK: Record<string, number> = { CONFIRMED: 0, UNCERTAIN: 1, DISMISSED: 2 };
+
+function sortEvaluatedFindings(list: EvaluatedFinding[]): EvaluatedFinding[] {
+  return [...list].sort((a, b) => {
+    const va = VERDICT_RANK[a.council?.judge.verdict ?? 'CONFIRMED'] ?? 0;
+    const vb = VERDICT_RANK[b.council?.judge.verdict ?? 'CONFIRMED'] ?? 0;
+    if (va !== vb) return va - vb;
+    const sa = SEV_RANK[a.council?.judge.finalSeverity ?? a.initialSeverity] ?? 3;
+    const sb = SEV_RANK[b.council?.judge.finalSeverity ?? b.initialSeverity] ?? 3;
+    if (sa !== sb) return sa - sb;
+    return a.relativePath.localeCompare(b.relativePath) || a.line - b.line;
+  });
 }
 
 function computeScoreAndGrade(findings: EvaluatedFinding[]): {
@@ -54,9 +74,12 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
   progress?.(`Scanned ${filesScanned} agent/MCP files in ${scanMs}ms -> ${candidates.length} candidate(s)`);
 
   const councilModePref = options.councilMode ?? 'auto';
+  const hasExplicitProvider = Boolean(
+    options.provider || options.advocateSpec || options.skepticSpec || options.judgeSpec,
+  );
   const wantsLlm =
     councilModePref === 'llm' ||
-    Boolean(options.provider || options.advocateSpec || options.skepticSpec || options.judgeSpec) ||
+    hasExplicitProvider ||
     (councilModePref === 'auto' &&
       Boolean(
         process.env.ANTHROPIC_API_KEY ||
@@ -67,41 +90,26 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
       ));
 
   const maxLlm = options.maxLlmFindings ?? 15;
-  const evaluated: EvaluatedFinding[] = new Array(candidates.length);
   let actualMode: ScanReport['councilMode'] = councilModePref === 'off' ? 'off' : 'heuristic';
   let modelName = councilModePref === 'off' ? 'none' : 'council-heuristic-v1';
   let fallbackWarning: string | undefined;
-  let circuitBrokenReason: string | undefined;
-  let llmCount = 0;
+
+  const councilById = new Map<string, EvaluatedFinding['council']>();
 
   try {
-    for (let i = 0; i < candidates.length; i++) {
-      const c = candidates[i];
-      let council;
+    if (councilModePref !== 'off') {
+      const llmQueue: CandidateFinding[] = [];
 
-      if (councilModePref === 'off') {
-        council = undefined;
-      } else if (!wantsLlm || circuitBrokenReason) {
-        council = runHeuristicCouncil(c);
-        if (circuitBrokenReason) {
-          council.fallbackReason = circuitBrokenReason;
+      for (const c of candidates) {
+        if (!wantsLlm || isFastDismissableCandidate(c) || llmQueue.length >= maxLlm) {
+          councilById.set(c.id, runHeuristicCouncil(c));
+        } else {
+          llmQueue.push(c);
         }
-      } else if (!options.strictLlm && isFastDismissableCandidate(c)) {
-        council = runHeuristicCouncil(c);
-      } else if (llmCount >= maxLlm && !options.strictLlm) {
-        council = runHeuristicCouncil(c);
-      } else {
-        llmCount += 1;
-        const providerLabel =
-          options.provider || options.advocateSpec || options.skepticSpec || options.judgeSpec || 'auto-llm';
-        progress?.(
-          `Council deliberating [${llmCount}/${Math.min(maxLlm, candidates.length)}] ${c.ruleId} in ${c.relativePath}:${c.line} via ${providerLabel}${
-            llmCount === 1 && (providerLabel === 'antigravity' || String(providerLabel).startsWith('agy-cli'))
-              ? ' (warming persistent agy stream-json session on turn 1...)'
-              : '...'
-          }`,
-        );
-        council = await deliberateFinding(c, {
+      }
+
+      if (llmQueue.length > 0) {
+        const roles = resolveCouncilRoles({
           mode: councilModePref,
           provider: options.provider,
           model: options.model,
@@ -111,35 +119,57 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
           strictLlm: options.strictLlm,
         });
 
-        // Trip circuit breaker immediately if LLM provider failed so we never hang retrying a dead/quota-empty CLI
-        if (council?.fallbackReason) {
-          circuitBrokenReason = council.fallbackReason;
-          if (!fallbackWarning) {
-            fallbackWarning = council.fallbackReason;
+        if (!roles) {
+          const msg =
+            'No LLM provider or CLI found. Pass --provider antigravity | claude-cli | codex-cli | gemini-cli | ollama, or set an API key.';
+          if (councilModePref === 'llm' || hasExplicitProvider || options.strictLlm) {
+            throw new Error(msg);
+          }
+          for (const c of llmQueue) {
+            councilById.set(c.id, runHeuristicCouncil(c));
+          }
+        } else {
+          try {
+            const batchReviews = await runLLMCouncilBatch(llmQueue, roles, progress);
+            for (const c of llmQueue) {
+              const rev = batchReviews.get(c.id) ?? runHeuristicCouncil(c);
+              councilById.set(c.id, rev);
+              if (rev.mode === 'llm') {
+                actualMode = 'llm';
+                modelName = rev.modelUsed;
+              }
+            }
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            if (options.strictLlm) {
+              throw new Error(`LLM Council failed (${reason})`);
+            }
+            fallbackWarning = `LLM provider unavailable (${reason}); fell back to council-heuristic-v1`;
             progress?.(`⚠ ${fallbackWarning}`);
+            for (const c of llmQueue) {
+              const fb = runHeuristicCouncil(c);
+              fb.fallbackReason = fallbackWarning;
+              councilById.set(c.id, fb);
+            }
           }
         }
       }
-
-      if (council) {
-        if (council.mode === 'llm') {
-          actualMode = 'llm';
-          modelName = council.modelUsed;
-        }
-        if (council.fallbackReason && !fallbackWarning) {
-          fallbackWarning = council.fallbackReason;
-        }
-      }
-
-      const item: EvaluatedFinding = { ...c, council };
-      if (options.prove && (council?.judge.verdict ?? 'CONFIRMED') === 'CONFIRMED') {
-        item.proof = await runCanaryProof(item);
-      }
-      evaluated[i] = item;
     }
   } finally {
     closeActiveProviderSessions();
   }
+
+  const rawEvaluated: EvaluatedFinding[] = [];
+  for (const c of candidates) {
+    const council = councilById.get(c.id);
+    const item: EvaluatedFinding = { ...c, council };
+    if (options.prove && (council?.judge.verdict ?? 'CONFIRMED') === 'CONFIRMED') {
+      item.proof = await runCanaryProof(item);
+    }
+    rawEvaluated.push(item);
+  }
+
+  const evaluated = sortEvaluatedFindings(rawEvaluated);
 
   const bySeverity: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
   let confirmed = 0;

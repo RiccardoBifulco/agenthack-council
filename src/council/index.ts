@@ -2,6 +2,7 @@ import type { CandidateFinding, CouncilReview, Severity, VerdictStatus } from '.
 import {
   callLLMJson,
   parseProviderSpec,
+  prewarmRoleSessions,
   resolveProvider,
   type LLMProviderConfig,
   type ProviderName,
@@ -15,6 +16,7 @@ export interface DeliberationOptions {
   skepticSpec?: string;
   judgeSpec?: string;
   strictLlm?: boolean;
+  onProgress?: (msg: string) => void;
 }
 
 function isInsideMarkdownCodeExample(c: CandidateFinding): boolean {
@@ -50,7 +52,7 @@ export function isFastDismissableCandidate(c: CandidateFinding): boolean {
   return false;
 }
 
-function buildMinimalPatch(c: CandidateFinding): string {
+export function buildMinimalPatch(c: CandidateFinding): string {
   const file = c.relativePath;
   if (c.ruleId === 'AHC-004') {
     const redacted = c.snippet.replace(
@@ -189,12 +191,9 @@ function labelForCfg(cfg: LLMProviderConfig): string {
   return `${cfg.provider}:${cfg.model}`;
 }
 
-export async function runLLMCouncil(
-  c: CandidateFinding,
-  roles: { advocate: LLMProviderConfig; skeptic: LLMProviderConfig; judge: LLMProviderConfig },
-): Promise<CouncilReview> {
-  const t0 = Date.now();
-  const baseContext = [
+function formatCandidateDigest(c: CandidateFinding): string {
+  return [
+    `CANDIDATE id="${c.id}"`,
     `Rule: ${c.ruleId} (${c.ruleName}) [${c.cwe}]`,
     `File: ${c.relativePath}:${c.line} (category: ${c.category})`,
     `Inside Markdown Code Fence: ${c.inCodeFence ? 'yes' : 'no'}`,
@@ -202,57 +201,154 @@ export async function runLLMCouncil(
     `Evidence: ${c.evidence}`,
     `Code Context (secrets pre-redacted):\n${c.contextWindow}`,
   ].join('\n');
+}
 
-  const [advocate, skeptic] = await Promise.all([
-    callLLMJson<CouncilReview['advocate']>(
-      roles.advocate,
-      'You are ADVOCATE on an AI Agent Security Model Council. Build the strongest realistic exploit case supported by the source, checking attacker control, agent context ingestion, reachability, and blast radius. Return JSON with keys: exploitScenario (string), attackerControl (string), blastRadius (string), confidence (number 0..1).',
-      baseContext,
+export async function runLLMCouncil(
+  c: CandidateFinding,
+  roles: { advocate: LLMProviderConfig; skeptic: LLMProviderConfig; judge: LLMProviderConfig },
+): Promise<CouncilReview> {
+  const map = await runLLMCouncilBatch([c], roles);
+  return map.get(c.id)!;
+}
+
+/**
+ * Evaluates a batch of candidates across 3 isolated adversarial LLM roles in just 2 waves:
+ * - Wave 1 (Parallel): Advocate LLM + Skeptic LLM independently evaluate all candidates without seeing each other.
+ * - Wave 2: Judge LLM weighs both opposing briefs for each candidate and issues final verdicts & diffs.
+ */
+export async function runLLMCouncilBatch(
+  candidates: CandidateFinding[],
+  roles: { advocate: LLMProviderConfig; skeptic: LLMProviderConfig; judge: LLMProviderConfig },
+  onProgress?: (msg: string) => void,
+): Promise<Map<string, CouncilReview>> {
+  const out = new Map<string, CouncilReview>();
+  if (candidates.length === 0) return out;
+
+  const t0 = Date.now();
+  const advRole: LLMProviderConfig = { ...roles.advocate, roleSlot: 'advocate' };
+  const skpRole: LLMProviderConfig = { ...roles.skeptic, roleSlot: 'skeptic' };
+  const jdgRole: LLMProviderConfig = { ...roles.judge, roleSlot: 'judge' };
+
+  prewarmRoleSessions({ advocate: advRole, skeptic: skpRole, judge: jdgRole });
+
+  const digestBlock = candidates.map(formatCandidateDigest).join('\n\n---\n\n');
+  const advLabel = labelForCfg(advRole);
+  const skpLabel = labelForCfg(skpRole);
+  const jdgLabel = labelForCfg(jdgRole);
+
+  onProgress?.(
+    `Wave 1/2: Running parallel Advocate (${advLabel}) vs Skeptic (${skpLabel}) across ${candidates.length} candidate(s)...`,
+  );
+
+  type AdvItem = CouncilReview['advocate'] & { id: string };
+  type SkpItem = CouncilReview['skeptic'] & { id: string };
+  type JdgItem = CouncilReview['judge'] & { id: string };
+
+  const [advWrap, skpWrap] = await Promise.all([
+    callLLMJson<{ evaluations: AdvItem[] }>(
+      advRole,
+      'You are ADVOCATE on an AI Agent Security Model Council. For EVERY candidate below, build the strongest realistic exploit case supported by the source, checking attacker control, agent context ingestion, reachability, and blast radius. Return a JSON object: {"evaluations": [{"id": string, "exploitScenario": string, "attackerControl": string, "blastRadius": string, "confidence": number}]}. Include every candidate id.',
+      digestBlock,
     ),
-    callLLMJson<CouncilReview['skeptic']>(
-      roles.skeptic,
-      'You are SKEPTIC on an AI Agent Security Model Council. Try to disprove false positives by checking if this is benign documentation, a fenced example, a dummy placeholder secret, a test fixture, or an ordinary user-intended CLI step. Return JSON with keys: counterArgument (string), mitigatingFactors (string[]), falsePositiveLikelihood (number 0..1).',
-      baseContext,
+    callLLMJson<{ evaluations: SkpItem[] }>(
+      skpRole,
+      'You are SKEPTIC on an AI Agent Security Model Council. For EVERY candidate below, challenge false positives by checking if it is benign documentation, a fenced example, a dummy placeholder, a test fixture, or a legitimate user-curated workflow step. Return a JSON object: {"evaluations": [{"id": string, "counterArgument": string, "mitigatingFactors": string[], "falsePositiveLikelihood": number}]}. Include every candidate id.',
+      digestBlock,
     ),
   ]);
 
-  const judge = await callLLMJson<CouncilReview['judge']>(
-    roles.judge,
-    'You are JUDGE on an AI Agent Security Model Council. Read the source evidence, Advocate brief, and Skeptic brief. If Skeptic proves it is a benign example, test fixture, placeholder, or ordinary documentation, output verdict="DISMISSED". If Advocate and Skeptic reasonably disagree without clear proof, output verdict="UNCERTAIN". Otherwise output verdict="CONFIRMED". Return JSON with keys: verdict ("CONFIRMED"|"UNCERTAIN"|"DISMISSED"), finalSeverity ("critical"|"high"|"medium"|"low"), confidence (number 0..1), rationale (string), minimalPatch (optional unified diff string).',
-    `${baseContext}\n\nADVOCATE BRIEF:\n${JSON.stringify(advocate)}\n\nSKEPTIC BRIEF:\n${JSON.stringify(skeptic)}`,
+  const advById = new Map<string, AdvItem>((advWrap.evaluations || []).map((x) => [x.id, x]));
+  const skpById = new Map<string, SkpItem>((skpWrap.evaluations || []).map((x) => [x.id, x]));
+
+  onProgress?.(`Wave 2/2: Judge (${jdgLabel}) weighing Advocate vs Skeptic briefs...`);
+
+  const judgeInput = candidates
+    .map((c) => {
+      const a = advById.get(c.id);
+      const s = skpById.get(c.id);
+      return `${formatCandidateDigest(c)}\nADVOCATE BRIEF: ${JSON.stringify(a ?? {})}\nSKEPTIC BRIEF: ${JSON.stringify(s ?? {})}`;
+    })
+    .join('\n\n---\n\n');
+
+  const jdgWrap = await callLLMJson<{ evaluations: JdgItem[] }>(
+    jdgRole,
+    'You are JUDGE on an AI Agent Security Model Council. For EVERY candidate below, weigh the source evidence, Advocate brief, and Skeptic brief. If Skeptic proves it is a benign example, test fixture, placeholder, or non-exploitable doc, output verdict="DISMISSED". If Advocate and Skeptic reasonably disagree without clear exploitability, output verdict="UNCERTAIN". Otherwise output verdict="CONFIRMED" (calibrating finalSeverity accurately). Return a JSON object: {"evaluations": [{"id": string, "verdict": "CONFIRMED"|"UNCERTAIN"|"DISMISSED", "finalSeverity": "critical"|"high"|"medium"|"low", "confidence": number, "rationale": string, "minimalPatch": string}]}. Include every candidate id.',
+    judgeInput,
   );
 
-  const advLabel = labelForCfg(roles.advocate);
-  const skpLabel = labelForCfg(roles.skeptic);
-  const jdgLabel = labelForCfg(roles.judge);
+  const jdgById = new Map<string, JdgItem>((jdgWrap.evaluations || []).map((x) => [x.id, x]));
   const uniqueModels = new Set([advLabel, skpLabel, jdgLabel]);
-  const summaryLabel =
-    uniqueModels.size === 1 ? advLabel : `${advLabel} vs ${skpLabel} → ${jdgLabel}`;
+  const summaryLabel = uniqueModels.size === 1 ? advLabel : `${advLabel} vs ${skpLabel} → ${jdgLabel}`;
+  const perItemMs = Math.max(1, Math.round((Date.now() - t0) / candidates.length));
 
-  return {
-    advocate: { ...advocate, modelUsed: advLabel },
-    skeptic: { ...skeptic, modelUsed: skpLabel },
-    judge: {
-      ...judge,
-      minimalPatch: judge.minimalPatch || (judge.verdict !== 'DISMISSED' ? buildMinimalPatch(c) : undefined),
-      modelUsed: jdgLabel,
-    },
-    mode: 'llm',
-    modelUsed: summaryLabel,
-    durationMs: Date.now() - t0,
-  };
+  for (const c of candidates) {
+    const heur = runHeuristicCouncil(c);
+    const a = advById.get(c.id);
+    const s = skpById.get(c.id);
+    const j = jdgById.get(c.id);
+
+    const verdict: VerdictStatus =
+      j?.verdict === 'CONFIRMED' || j?.verdict === 'UNCERTAIN' || j?.verdict === 'DISMISSED'
+        ? j.verdict
+        : heur.judge.verdict;
+    const finalSeverity: Severity =
+      j?.finalSeverity === 'critical' ||
+      j?.finalSeverity === 'high' ||
+      j?.finalSeverity === 'medium' ||
+      j?.finalSeverity === 'low'
+        ? j.finalSeverity
+        : heur.judge.finalSeverity;
+
+    out.set(c.id, {
+      advocate: {
+        exploitScenario: a?.exploitScenario || heur.advocate.exploitScenario,
+        attackerControl: a?.attackerControl || heur.advocate.attackerControl,
+        blastRadius: a?.blastRadius || heur.advocate.blastRadius,
+        confidence: typeof a?.confidence === 'number' ? a.confidence : heur.advocate.confidence,
+        modelUsed: advLabel,
+      },
+      skeptic: {
+        counterArgument: s?.counterArgument || heur.skeptic.counterArgument,
+        mitigatingFactors: Array.isArray(s?.mitigatingFactors) ? s.mitigatingFactors : heur.skeptic.mitigatingFactors,
+        falsePositiveLikelihood:
+          typeof s?.falsePositiveLikelihood === 'number' ? s.falsePositiveLikelihood : heur.skeptic.falsePositiveLikelihood,
+        modelUsed: skpLabel,
+      },
+      judge: {
+        verdict,
+        finalSeverity,
+        confidence: typeof j?.confidence === 'number' ? j.confidence : heur.judge.confidence,
+        rationale: j?.rationale || heur.judge.rationale,
+        minimalPatch: j?.minimalPatch || (verdict !== 'DISMISSED' ? buildMinimalPatch(c) : undefined),
+        modelUsed: jdgLabel,
+      },
+      mode: 'llm',
+      modelUsed: summaryLabel,
+      durationMs: perItemMs,
+    });
+  }
+
+  return out;
 }
 
-function resolveRoleCfg(
-  roleSpec: string | undefined,
-  fallbackProvider: ProviderName | undefined,
-  fallbackModel: string | undefined,
-): LLMProviderConfig | null {
-  if (roleSpec) {
-    const parsed = parseProviderSpec(roleSpec);
-    return resolveProvider(parsed.provider, parsed.model ?? fallbackModel);
-  }
-  return resolveProvider(fallbackProvider, fallbackModel);
+export function resolveCouncilRoles(options: DeliberationOptions): {
+  advocate: LLMProviderConfig;
+  skeptic: LLMProviderConfig;
+  judge: LLMProviderConfig;
+} | null {
+  const resolveRole = (spec?: string): LLMProviderConfig | null => {
+    if (spec) {
+      const parsed = parseProviderSpec(spec);
+      return resolveProvider(parsed.provider, parsed.model ?? options.model);
+    }
+    return resolveProvider(options.provider, options.model);
+  };
+
+  const advocate = resolveRole(options.advocateSpec);
+  const skeptic = resolveRole(options.skepticSpec);
+  const judge = resolveRole(options.judgeSpec);
+  if (!advocate || !skeptic || !judge) return null;
+  return { advocate, skeptic, judge };
 }
 
 export async function deliberateFinding(
@@ -280,19 +376,14 @@ export async function deliberateFinding(
     return runHeuristicCouncil(c);
   }
 
-  // Fast-path deterministic dismissal for fenced code examples, test files, and localhost placeholders
-  // so LLM calls are reserved for real ambiguous/active candidates.
   if (!options.strictLlm && isFastDismissableCandidate(c)) {
     return runHeuristicCouncil(c);
   }
 
-  const advCfg = resolveRoleCfg(options.advocateSpec, options.provider, options.model);
-  const skpCfg = resolveRoleCfg(options.skepticSpec, options.provider, options.model);
-  const jdgCfg = resolveRoleCfg(options.judgeSpec, options.provider, options.model);
-
-  if (!advCfg || !skpCfg || !jdgCfg) {
+  const roles = resolveCouncilRoles(options);
+  if (!roles) {
     const missingMsg =
-      'No LLM provider or CLI found. Pass --provider claude-cli | codex-cli | gemini-cli | ollama, or set an API key.';
+      'No LLM provider or CLI found. Pass --provider antigravity | claude-cli | codex-cli | gemini-cli | ollama, or set an API key.';
     if (mode === 'llm' || hasExplicitProvider || options.strictLlm) {
       throw new Error(missingMsg);
     }
@@ -300,7 +391,7 @@ export async function deliberateFinding(
   }
 
   try {
-    return await runLLMCouncil(c, { advocate: advCfg, skeptic: skpCfg, judge: jdgCfg });
+    return await runLLMCouncil(c, roles);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     if (options.strictLlm) {
