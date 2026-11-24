@@ -1,0 +1,49 @@
+{
+  "name": "agenthack-council",
+  "version": "0.1.0",
+  "description": "Adversarial AI Security Harness & Model Council (Advocate -> Skeptic -> Judge) for AI Agents, MCP Servers, SKILL.md & Agentic Repos.",
+  "type": "module",
+  "bin": {
+    "agenthack-council": "./dist/src/cli.js",
+    "agenthack": "./dist/src/cli.js"
+  },
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "files": [
+    "dist/src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/src/cli.js",
+    "dev": "tsc --watch",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "demo": "npm run build && node dist/src/cli.js demo",
+    "demo:ui": "npm run build && node dist/src/cli.js demo --ui"
+  },
+  "keywords": [
+    "ai-security",
+    "mcp",
+    "claude-code",
+    "cursor",
+    "prompt-injection",
+    "tool-poisoning",
+    "security-scanner",
+    "llm-security",
+    "model-council",
+    "agent-security"
+  ],
+  "author": "Riccardo Bifulco <https://github.com/RiccardoBifulco>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RiccardoBifulco/agenthack-council.git"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,30 @@
+name: 'AgentHack Council Scan'
+description: 'Adversarial AI Security Harness (Advocate -> Skeptic -> Judge) for AI Agents, MCP configs, and SKILL.md files'
+author: 'Riccardo Bifulco'
+branding:
+  icon: 'shield'
+  color: 'purple'
+inputs:
+  path:
+    description: 'Path to scan'
+    required: false
+    default: '.'
+  council:
+    description: 'Council mode: auto | llm | heuristic | off'
+    required: false
+    default: 'auto'
+  prove:
+    description: 'Run canary sandbox proof on confirmed findings'
+    required: false
+    default: 'true'
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - shell: bash
+      run: |
+        ProveFlag=""
+        if [ "${{ inputs.prove }}" = "true" ]; then ProveFlag="--prove"; fi
+        npx --yes agenthack-council "${{ inputs.path }}" --council "${{ inputs.council }}" $ProveFlag --fail-on-confirmed
