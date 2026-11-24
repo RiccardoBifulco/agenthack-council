@@ -1,4 +1,5 @@
 import { deliberateFinding } from './council/index.js';
+import type { ProviderName } from './council/providers.js';
 import { runCanaryProof } from './prover/index.js';
 import { discoverLocalAgentPaths, runStaticScan } from './scanner/index.js';
 import type { EvaluatedFinding, ScanReport, Severity } from './types.js';
@@ -6,6 +7,7 @@ import type { EvaluatedFinding, ScanReport, Severity } from './types.js';
 export interface AuditOptions {
   targets?: string[];
   councilMode?: 'auto' | 'llm' | 'heuristic' | 'off';
+  provider?: ProviderName;
   model?: string;
   prove?: boolean;
 }
@@ -42,7 +44,11 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
   let modelName = councilModePref === 'off' ? 'none' : 'council-heuristic-v1';
 
   for (const c of candidates) {
-    const council = await deliberateFinding(c, { mode: councilModePref, model: options.model });
+    const council = await deliberateFinding(c, {
+      mode: councilModePref,
+      provider: options.provider,
+      model: options.model,
+    });
     if (council) {
       actualMode = council.mode;
       modelName = council.modelUsed;

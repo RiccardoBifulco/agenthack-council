@@ -1,5 +1,5 @@
 import type { CandidateFinding, CouncilReview, Severity, VerdictStatus } from '../types.js';
-import { callLLMJson, detectLLMProvider, type LLMProviderConfig } from './providers.js';
+import { callLLMJson, resolveProvider, type LLMProviderConfig, type ProviderName } from './providers.js';
 
 function isInsideMarkdownCodeExample(contextWindow: string): boolean {
   return /```|\b(?:anti-pattern|do not do|never do in production|example of bad|for example)\b/i.test(
@@ -184,17 +184,29 @@ export async function runLLMCouncil(
 
 export async function deliberateFinding(
   c: CandidateFinding,
-  options: { mode?: 'auto' | 'llm' | 'heuristic' | 'off'; model?: string } = {},
+  options: { mode?: 'auto' | 'llm' | 'heuristic' | 'off'; provider?: ProviderName; model?: string } = {},
 ): Promise<CouncilReview | undefined> {
   const mode = options.mode ?? 'auto';
   if (mode === 'off') return undefined;
-  if (mode === 'heuristic') return runHeuristicCouncil(c);
+  if (mode === 'heuristic' && !options.provider) return runHeuristicCouncil(c);
 
-  const llmCfg = detectLLMProvider(options.model);
+  const hasEnvKey = Boolean(
+    process.env.ANTHROPIC_API_KEY ||
+      process.env.OPENAI_API_KEY ||
+      process.env.GEMINI_API_KEY ||
+      process.env.OPENROUTER_API_KEY ||
+      process.env.OLLAMA_MODEL,
+  );
+
+  if (mode === 'auto' && !options.provider && !hasEnvKey) {
+    return runHeuristicCouncil(c);
+  }
+
+  const llmCfg = resolveProvider(options.provider, options.model);
   if (!llmCfg) {
-    if (mode === 'llm') {
+    if (mode === 'llm' || options.provider) {
       throw new Error(
-        'Council mode "llm" requested, but no API key found (set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, or OLLAMA_MODEL).',
+        'No LLM provider or CLI found. Pass --provider claude-cli | codex-cli | gemini-cli | ollama, or set an API key.',
       );
     }
     return runHeuristicCouncil(c);

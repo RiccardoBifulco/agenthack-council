@@ -62,18 +62,27 @@ npx agenthack-council ./path/to/mcp-server --prove --ui
 
 ---
 
-## Multi-Provider LLM Council (Optional, Zero-SDK)
+## Multi-Provider LLM Council (Zero API Key via CLI Subscriptions, or Bring Your Own Key)
 
-Out of the box, `agenthack-council` runs an instant offline context-aware council (`council-heuristic-v1`). Set any API key (or local Ollama model) and `--council auto` automatically upgrades deliberation to a live 3-agent LLM council:
+Out of the box, `agenthack-council` runs an instant offline context-aware council (`council-heuristic-v1`).
+
+Already logged into **Claude Code**, **Codex**, or **Gemini CLI** with your subscription? Run the live 3-agent LLM council (`Advocate → Skeptic → Judge`) **without paying for a separate API key**:
 
 ```bash
-# Anthropic Claude
+# Use your existing Claude Code CLI login (zero API key!)
+npx agenthack-council . --provider claude-cli --prove --ui
+
+# Use your existing OpenAI Codex CLI login
+npx agenthack-council . --provider codex-cli --prove --ui
+
+# Or run 100% locally via Ollama
+npx agenthack-council . --provider ollama --model qwen2.5-coder:14b --ui
+```
+
+Or pass any standard API key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`) and `--council auto` upgrades automatically:
+
+```bash
 ANTHROPIC_API_KEY=sk-ant-... npx agenthack-council . --prove --ui
-
-# Local Ollama (100% private & offline)
-OLLAMA_MODEL=qwen2.5-coder:14b npx agenthack-council . --ui
-
-# Also supports OPENAI_API_KEY, GEMINI_API_KEY, and OPENROUTER_API_KEY
 ```
 
 ---

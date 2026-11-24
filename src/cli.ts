@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
+import type { ProviderName } from './council/providers.js';
 import { createDemoWorkspace } from './fixtures/demo.js';
 import { runAudit } from './index.js';
 import { renderCliReport } from './ui/cli-reporter.js';
@@ -14,8 +15,9 @@ Usage:
   npx agenthack-council demo [--ui]
 
 Options:
+  --provider <name>  Zero-key CLI or API provider: claude-cli | codex-cli | gemini-cli | ollama | anthropic | openai | gemini | openrouter
   --council <mode>   Council mode: auto | llm | heuristic | off (default: auto)
-  --model <name>     Override LLM model (uses ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, or OLLAMA_MODEL)
+  --model <name>     Override model name (e.g. sonnet, gpt-5-codex, qwen2.5-coder:7b)
   --prove            Run ephemeral Canary Sandbox proof on confirmed findings
   --ui               Launch interactive dark-mode Web Dashboard (http://127.0.0.1:4317)
   --port <number>    Port for --ui dashboard (default: 4317)
@@ -33,6 +35,7 @@ async function main(): Promise<void> {
   }
 
   let councilMode: 'auto' | 'llm' | 'heuristic' | 'off' = 'auto';
+  let provider: ProviderName | undefined;
   let model: string | undefined;
   let prove = false;
   let ui = false;
@@ -45,6 +48,8 @@ async function main(): Promise<void> {
     const a = args[i];
     if (a === '--council' && args[i + 1]) {
       councilMode = args[++i] as typeof councilMode;
+    } else if (a === '--provider' && args[i + 1]) {
+      provider = args[++i] as ProviderName;
     } else if (a === '--model' && args[i + 1]) {
       model = args[++i];
     } else if (a === '--prove') {
@@ -72,7 +77,7 @@ async function main(): Promise<void> {
   }
 
   try {
-    const report = await runAudit({ targets, councilMode, model, prove });
+    const report = await runAudit({ targets, councilMode, provider, model, prove });
 
     if (jsonOut) {
       console.log(JSON.stringify(report, null, 2));
