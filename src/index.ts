@@ -95,7 +95,11 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
         const providerLabel =
           options.provider || options.advocateSpec || options.skepticSpec || options.judgeSpec || 'auto-llm';
         progress?.(
-          `Council deliberating [${llmCount}/${Math.min(maxLlm, candidates.length)}] ${c.ruleId} in ${c.relativePath}:${c.line} via ${providerLabel}...`,
+          `Council deliberating [${llmCount}/${Math.min(maxLlm, candidates.length)}] ${c.ruleId} in ${c.relativePath}:${c.line} via ${providerLabel}${
+            llmCount === 1 && (providerLabel === 'antigravity' || String(providerLabel).startsWith('agy-cli'))
+              ? ' (warming persistent agy stream-json session on turn 1...)'
+              : '...'
+          }`,
         );
         council = await deliberateFinding(c, {
           mode: councilModePref,

@@ -211,9 +211,7 @@ class AgyStreamWorker {
             event?: string;
             result?: { status?: string; response?: string; error?: string };
           };
-          if (evt.event === 'init') {
-            this.initialized = true;
-          } else if (evt.event === 'result' && evt.result) {
+          if (evt.event === 'result' && evt.result) {
             this.initialized = true;
             const res = evt.result;
             const resolve = this.pendingResolve;
@@ -269,7 +267,9 @@ class AgyStreamWorker {
     if (this.dead) {
       return Promise.reject(new Error('agy session closed'));
     }
-    const timeoutMs = this.initialized ? 45000 : 240000;
+    // First turn in `agy` initializes configured MCP servers (which may wait on offline remote/NAS MCP timeouts);
+    // once Turn 1 completes, subsequent turns reuse the warm session in ~1-2s.
+    const timeoutMs = this.initialized ? 45000 : 360000;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.dead = true;

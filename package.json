@@ -1,6 +1,6 @@
 {
   "name": "agenthack-council",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Adversarial AI Security Harness & Model Council (Advocate -> Skeptic -> Judge) for AI Agents, MCP Servers, SKILL.md & Agentic Repos.",
   "type": "module",
   "bin": {
