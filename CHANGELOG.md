@@ -5,6 +5,11 @@ All notable changes to **AgentHack Council** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-11-24
+
+### Fixed
+- **Priority-Ordered Agent Directory Traversal:** `walkDir` now collects direct configuration files (`settings.json`, `.mcp.json`, `CLAUDE.md`, `SKILL.md`) and traverses active agent directories (`skills`, `rules`, `hooks`, `mcp-servers`, `agents`, `commands`) *before* bulky plugin caches while skipping session transcript/telemetry folders (`projects`, `session-env`, `file-history`, `marketplaces`), ensuring `~/.claude/skills/` and `~/.claude/settings.json` are never starved by large plugin trees.
+
 ## [0.2.1] - 2026-11-24
 
 ### Fixed

@@ -474,6 +474,7 @@ export function scanFileContent(
     // AHC-006: Over-privileged agent permissions
     if (
       (category === 'agent-settings' || category === 'mcp-config' || category === 'agent-hook') &&
+      !/^\s*(?:#|\/\/|\*\*|[-*]\s+\*\*)/.test(line) &&
       OVERPRIVILEGED_RE.test(line)
     ) {
       push(

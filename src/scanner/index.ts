@@ -17,6 +17,7 @@ const IGNORED_DIRS = new Set([
   'coverage',
   '.tmp',
   '.staging',
+  'marketplaces',
   'backups',
   'archivio',
   '.cache',
@@ -26,6 +27,18 @@ const IGNORED_DIRS = new Set([
   '.cargo',
   '.rustup',
   '.Trash',
+  // Agent runtime session/transcript/telemetry directories (not skills or configs)
+  'projects',
+  'session-env',
+  'sessions',
+  'file-history',
+  'paste-cache',
+  'shell-snapshots',
+  'telemetry',
+  'debug',
+  'todos',
+  'uploads',
+  // OS home media/system folders when invoked from ~
   'Library',
   'Applications',
   'Pictures',
@@ -33,6 +46,22 @@ const IGNORED_DIRS = new Set([
   'Movies',
   'Downloads',
 ]);
+
+const HIGH_PRIORITY_DIRS = new Set([
+  '.claude',
+  '.cursor',
+  '.codex',
+  '.gemini',
+  'skills',
+  'skills-cursor',
+  'rules',
+  'hooks',
+  'mcp-servers',
+  'agents',
+  'commands',
+]);
+
+const LOW_PRIORITY_DIRS = new Set(['plugins', 'vendor_imports', 'marketplaces', 'cache']);
 
 const MAX_FILE_BYTES = 512 * 1024; // 512 KB
 
@@ -44,7 +73,13 @@ export interface StaticScanResult {
   candidates: CandidateFinding[];
 }
 
-async function walkDir(rootDir: string, currentDir: string, out: string[], maxFiles = 3000): Promise<void> {
+function dirPriority(name: string): number {
+  if (HIGH_PRIORITY_DIRS.has(name)) return 0;
+  if (LOW_PRIORITY_DIRS.has(name)) return 2;
+  return 1;
+}
+
+async function walkDir(rootDir: string, currentDir: string, out: string[], maxFiles = 6000): Promise<void> {
   if (out.length >= maxFiles) return;
   let entries;
   try {
@@ -53,18 +88,28 @@ async function walkDir(rootDir: string, currentDir: string, out: string[], maxFi
     return;
   }
 
+  const subdirs: string[] = [];
+
+  // 1. Collect direct files in this directory first (ensures root .mcp.json, settings.json, CLAUDE.md, SKILL.md are never starved)
   for (const entry of entries) {
     if (out.length >= maxFiles) break;
     if (entry.isSymbolicLink()) continue;
     if (IGNORED_DIRS.has(entry.name)) continue;
     const full = path.join(currentDir, entry.name);
-    if (entry.isDirectory()) {
-      await walkDir(rootDir, full, out, maxFiles);
-    } else if (entry.isFile()) {
+    if (entry.isFile()) {
       if (classifyFile(full) !== null) {
         out.push(full);
       }
+    } else if (entry.isDirectory()) {
+      subdirs.push(entry.name);
     }
+  }
+
+  // 2. Recurse into high-priority directories (`skills`, `rules`, `hooks`, `mcp-servers`) before bulky plugin caches
+  subdirs.sort((a, b) => dirPriority(a) - dirPriority(b) || a.localeCompare(b));
+  for (const dirName of subdirs) {
+    if (out.length >= maxFiles) break;
+    await walkDir(rootDir, path.join(currentDir, dirName), out, maxFiles);
   }
 }
 
