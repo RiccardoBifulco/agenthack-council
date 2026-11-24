@@ -148,7 +148,7 @@ jobs:
   agenthack-council:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run AgentHack Council
         uses: RiccardoBifulco/agenthack-council@v0.2.0
@@ -159,7 +159,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Security
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'agenthack-council.sarif'
 ```
