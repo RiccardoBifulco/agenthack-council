@@ -78,6 +78,7 @@ export function renderCliReport(report: ScanReport, options?: { showDismissed?: 
       `${C.yellow}${report.summary.uncertain} Uncertain${C.reset} · ` +
       `${C.green}${report.summary.dismissed} Dismissed FPs${C.reset}`,
   );
+  lines.push('  Deterministic CI policy findings: ' + report.summary.ciBlocking);
   if (report.summary.unreviewed) lines.push('  Unreviewed candidates: ' + report.summary.unreviewed);
   if (report.coverage !== 'complete') {
     lines.push('  Coverage: ' + report.coverage);
@@ -94,7 +95,7 @@ export function renderCliReport(report: ScanReport, options?: { showDismissed?: 
     return lines.join('\n');
   }
 
-  const actionable = report.findings.filter((f) => (f.verdict) !== 'DISMISSED');
+  const actionable = report.findings.filter((f) => f.ciBlocking || f.verdict !== 'DISMISSED');
   const dismissedCount = report.findings.length - actionable.length;
   // Show dismissed in full if `--verbose` is passed OR if demo/small report (`<= 6` total findings)
   const visibleFindings = showDismissed || report.findings.length <= 6 ? report.findings : actionable;
@@ -109,7 +110,7 @@ export function renderCliReport(report: ScanReport, options?: { showDismissed?: 
     const sev = f.council?.judge.finalSeverity ?? f.initialSeverity;
     lines.push('');
     lines.push(
-      `  ${verdictPill(f)} ${sevBadge(sev)} ${C.bold}${f.ruleId}${C.reset} ${f.ruleName} ${C.gray}(${f.cwe})${C.reset}`,
+      `  ${verdictPill(f)}${f.ciBlocking ? ' [CI policy]' : ''} ${sevBadge(sev)} ${C.bold}${f.ruleId}${C.reset} ${f.ruleName} ${C.gray}(${f.cwe})${C.reset}`,
     );
     lines.push(`  ${C.cyan}${f.relativePath}:${f.line}${C.reset} ${C.gray}[${f.category}]${C.reset}`);
     lines.push(`  ${C.gray}│${C.reset} ${C.dim}${f.snippet}${C.reset}`);

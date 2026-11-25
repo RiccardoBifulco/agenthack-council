@@ -60,7 +60,7 @@ test('dashboard rescan preserves the selected offline mode and targets', async (
   assert.equal(rescanned.councilMode, 'off');
   assert.equal(rescanned.targetPath, initial.targetPath);
   assert.deepEqual(rescanned.summary, initial.summary);
-  assert.ok(rescanned.findings.every((item) => item.verdict === 'UNREVIEWED' && item.proof === undefined));
+  assert.ok(rescanned.findings.every((item) => item.verdict === 'UNREVIEWED' && Boolean(item.proof) === item.ciBlocking));
 
   const denied = await fetch(dashboard.url + '/api/scan', {
     method: 'POST',
@@ -163,7 +163,72 @@ test('finding IDs are unique across paths, stable across rescans, and deduplicat
   assert.equal(report.summary.confirmed, 0);
   assert.equal(report.summary.unreviewed, ids.length);
   assert.equal(report.score, null);
-  assert.ok(report.findings.every((item) => item.verdict === 'UNREVIEWED' && item.proof === undefined));
-  const sarif = buildSarifReport(report) as { runs: { results: { level: string; properties: { verdict: string } }[] }[] };
-  assert.ok(sarif.runs[0].results.every((result) => result.level === 'note' && result.properties.verdict === 'UNREVIEWED'));
+  assert.ok(report.findings.every((item) => item.verdict === 'UNREVIEWED' && Boolean(item.proof) === item.ciBlocking));
+  const sarif = buildSarifReport(report) as { runs: { results: { level: string; properties: { verdict: string; ciBlocking: boolean } }[] }[] };
+  assert.ok(sarif.runs[0].results.every((result) => result.properties.verdict === 'UNREVIEWED'));
+  assert.equal(sarif.runs[0].results.filter(({ properties }) => properties.ciBlocking).length, report.summary.ciBlocking);
+});
+
+test('CLI policy exit and SARIF are independent of LLM verdicts and provider errors', async (t) => {
+  const folder = await demoWorkspace(t);
+  const source = path.join(folder, 'skills', 'malicious-helper', 'SKILL.md');
+  const advisoryDir = path.join(folder, 'advisory');
+  await fs.mkdir(advisoryDir);
+  const advisory = path.join(advisoryDir, 'SKILL.md');
+  const advisoryLine = (await fs.readFile(source, 'utf8')).split('\n').find((line) => line.startsWith('For quick local testing'));
+  assert.ok(advisoryLine);
+  await fs.writeFile(advisory, advisoryLine + '\n');
+
+  const mockPath = path.join(folder, 'mock-provider.mjs');
+  await fs.writeFile(mockPath, `
+    globalThis.fetch = async (_url, init) => {
+      const verdict = process.env.AHC_TEST_VERDICT;
+      if (verdict === 'ERROR') throw new Error('Synthetic provider failure');
+      const { messages } = JSON.parse(init.body);
+      const ids = Array.from(messages[1].content.matchAll(/CANDIDATE id="([a-f0-9]+)"/g), (match) => match[1]);
+      const instruction = messages[0].content;
+      const evaluations = ids.map(id => {
+        if (instruction.startsWith('You are ADVOCATE')) {
+          return { id, exploitScenario: '', attackerControl: '', blastRadius: '', confidence: 0.5 };
+        }
+        if (instruction.startsWith('You are SKEPTIC')) {
+          return { id, counterArgument: '', mitigatingFactors: [], falsePositiveLikelihood: 0.5 };
+        }
+        return { id, verdict, rationale: 'Synthetic triage result', finalSeverity: 'critical', confidence: 0.9 };
+      });
+      return Response.json({ choices: [{ message: { content: JSON.stringify({ evaluations }) } }] });
+    };
+  `);
+
+  const runCli = (target: string, verdict: string, extra: string[] = [], format = '--json') => spawnSync(
+    process.execPath,
+    ['--import', mockPath, path.resolve('dist/src/cli.js'), target, format, '--provider', 'openai', ...extra],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, OPENAI_API_KEY: 'synthetic-test-key', AHC_TEST_VERDICT: verdict },
+      timeout: 10000,
+    },
+  );
+
+  const denied = runCli(source, 'DISMISSED', ['--fail-on-policy'], '--sarif');
+  assert.equal(denied.status, 1, denied.stderr);
+  const sarif = JSON.parse(denied.stdout);
+  assert.ok(sarif.runs[0].results.some((result: { level: string; properties: { ciBlocking: boolean; verdict: string } }) =>
+    result.level === 'error' && result.properties.ciBlocking && result.properties.verdict === 'DISMISSED'));
+
+  const allowed = runCli(advisory, 'CONFIRMED', ['--fail-on-confirmed']);
+  assert.equal(allowed.status, 0, allowed.stderr);
+  const report = JSON.parse(allowed.stdout) as ScanReport;
+  assert.ok(report.summary.confirmed > 0);
+  assert.equal(report.summary.ciBlocking, 0);
+
+  const providerFailure = runCli(advisory, 'ERROR', ['--fail-on-policy', '--strict-llm']);
+  assert.equal(providerFailure.status, 0, providerFailure.stderr);
+  assert.match((JSON.parse(providerFailure.stdout) as ScanReport).fallbackWarning ?? '', /Synthetic provider failure/);
+
+  const offline = runCli(source, 'ERROR', ['--council', 'off', '--fail-on-policy']);
+  assert.equal(offline.status, 1, offline.stderr);
+  const offlineReport = JSON.parse(offline.stdout) as ScanReport;
+  assert.equal(offlineReport.summary.confirmed, 0);
+  assert.ok(offlineReport.summary.ciBlocking > 0);
 });

@@ -459,6 +459,7 @@ export async function callLLMJson<T>(
     const base = cfg.baseUrl || 'https://api.anthropic.com';
     const url = base.endsWith('/v1') ? `${base}/messages` : `${base}/v1/messages`;
     const res = await fetch(url, {
+      signal: AbortSignal.timeout(25000),
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -482,6 +483,7 @@ export async function callLLMJson<T>(
         ? 'https://openrouter.ai/api/v1/chat/completions'
         : `${cfg.baseUrl || 'https://api.openai.com/v1'}/chat/completions`;
     const res = await fetch(url, {
+      signal: AbortSignal.timeout(25000),
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -503,6 +505,7 @@ export async function callLLMJson<T>(
   } else if (provider === 'gemini') {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.model)}:generateContent?key=${encodeURIComponent(cfg.apiKey!)}`;
     const res = await fetch(url, {
+      signal: AbortSignal.timeout(25000),
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -518,6 +521,7 @@ export async function callLLMJson<T>(
     rawText = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
   } else if (provider === 'ollama') {
     const res = await fetch(`${cfg.baseUrl}/api/chat`, {
+      signal: AbortSignal.timeout(25000),
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
