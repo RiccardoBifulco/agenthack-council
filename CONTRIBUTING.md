@@ -2,6 +2,13 @@
 
 Thank you for helping make the AI agent and Model Context Protocol (MCP) ecosystem safer! Contributions of new detection rules, false-positive refinements, LLM provider integrations, and documentation improvements are very welcome.
 
+## Make Your First Contribution
+
+- **Improve a quickstart example.** Run the documented command from a fresh checkout. If the output or prerequisites differ from the instructions, update [README.md](./README.md) and include the command you verified in your PR.
+- **Help reduce a false positive.** Use the [false-positive issue form](https://github.com/RiccardoBifulco/agenthack-council/issues/new?template=false_positive.yml). Include the rule ID, the scan command, the expected result, and a small synthetic fixture with any credentials and identifying details removed. If you have a fix, add the fixture as a regression case in [tests/scanner-and-council.test.ts](./tests/scanner-and-council.test.ts).
+
+Use the [security reporting instructions](./SECURITY.md#reporting-a-vulnerability) for vulnerabilities in AgentHack Council itself.
+
 ## Architectural Principles
 
 Before opening a Pull Request, please keep these three project invariants in mind:
@@ -20,7 +27,7 @@ npm ci
 # Run build + test suite
 npm test
 
-# Run deterministic self-audit (must exit 0 with 0 CONFIRMED findings)
+# Run the deterministic self-audit (expect zero CI policy findings)
 npm run self-audit
 
 # Launch the interactive demo workspace & Web UI
@@ -37,6 +44,6 @@ npm run demo:ui
 ## Pull Request Checklist
 
 - [ ] `npm test` passes with zero warnings or failures.
-- [ ] `npm run self-audit` reports `0 Confirmed` findings.
+- [ ] `npm run self-audit` exits successfully with `Deterministic CI policy findings: 0`.
 - [ ] Commit messages follow Conventional Commits (`feat(scanner): ...`, `fix(council): ...`, `docs: ...`).
 - [ ] Zero runtime npm dependencies introduced.
