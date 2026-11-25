@@ -12,7 +12,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-f59e0b.svg)](./LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-a78bfa.svg)](./CONTRIBUTING.md)
 
-**The Adversarial AI Security Harness (`Advocate → Skeptic → Judge` + Canary Sandbox Proof) for AI Coding Agents, MCP Servers, `SKILL.md`, and Agentic Repositories.**
+**The Adversarial AI Security Harness (`Advocate → Skeptic → Judge` + Static Evidence) for AI Coding Agents, MCP Servers, `SKILL.md`, and Agentic Repositories.**
 
 [Quickstart](#-quickstart-zero-install) · [Why a Model Council?](#-why-a-model-council) · [10 Threat Rules](#-10-built-in-agent--mcp-threat-rules) · [Zero-Key & Cross-Model LLMs](#-zero-api-key-cli--cross-model-council) · [GitHub Action & SARIF](#-github-action--code-scanning-sarif-210) · [Security Guarantees](#-security--privacy-guarantees)
 
@@ -22,7 +22,7 @@
 
 ## ⚡ Quickstart (Zero Install)
 
-Run the interactive demo right now — it spins up an ephemeral workspace with poisoned MCP tools, smuggled Unicode instructions, and benign security docs so you can watch the Council **confirm real exploits** and **dismiss false positives**:
+Run the interactive demo right now — it spins up an ephemeral workspace with poisoned MCP tools, smuggled Unicode instructions, and benign security docs so you can watch the Council **review static findings** and **dismiss false positives**:
 
 ```bash
 # Terminal report (runs in <20ms, zero API keys required)
@@ -59,12 +59,12 @@ Traditional regex scanners fail on AI agent ecosystems (`SKILL.md`, `CLAUDE.md`,
 | Withholds confirmation when evidence is ambiguous | ❌ Binary alert spam | ❌ Overconfident | ✅ **`UNCERTAIN` verdict tier** |
 | Raw secret protection before LLM calls | N/A | ❌ Often leaks keys | ✅ **Stage-1 pre-redaction** |
 | Subscription CLI reuse (`claude`, `codex`, `gemini`) | N/A | ❌ API key required | ✅ **Zero extra API bill** |
-| GitHub Security Tab (`SARIF 2.1.0`) + Canary Proof | ⚠️ Partial | ❌ Rare | ✅ **Built-in (`--sarif`, `--prove`)** |
+| GitHub Security Tab (`SARIF 2.1.0`) + Static Evidence | ⚠️ Partial | ❌ Rare | ✅ **Built-in (`--sarif`, `--prove`)** |
 | Runtime npm supply-chain dependencies | Many | Many | ✅ **Zero (`0` dependencies)** |
 
 ### Interactive Dark-Mode Web Dashboard (`--ui`)
 
-Inspect offensive **Advocate** briefs, **Skeptic** counter-arguments, **Judge** unified diff remediation patches, and **Canary Sandbox** proofs side by side — with instant `SARIF` and `JSON` export:
+Inspect offensive **Advocate** briefs, **Skeptic** counter-arguments, **Judge** unified diff remediation patches, and **static evidence** side by side — with instant `SARIF` and `JSON` export:
 
 <div align="center">
   <img src="./docs/assets/web-dashboard.svg" alt="AgentHack Council Interactive Web Dashboard" width="100%" />
@@ -93,7 +93,7 @@ Run `npx github:RiccardoBifulco/agenthack-council rules` at any time to inspect 
 
 ## 🤝 Zero-API-Key CLI & Cross-Model Council
 
-Out of the box, `agenthack-council` runs an instant offline context-aware council (`council-heuristic-v1`).
+The scan is offline by default, even when provider credentials are present. Select `--council llm`, `--provider`, or a per-role provider to opt in to LLM review. The provider receives the matched, redacted excerpt and finding metadata. `--council heuristic` and `--council off` stay local regardless of provider options. The dashboard keeps the mode and provider settings selected at launch.
 
 ### 1. Reuse Your Existing Coding CLI Login (Zero API Key!)
 
@@ -127,10 +127,10 @@ npx github:RiccardoBifulco/agenthack-council ./mcp-server \
 
 ### 3. Standard API Keys & AI Gateways
 
-Pass `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTER_API_KEY` (plus optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` for LiteLLM, Vercel AI Gateway, or Cloudflare AI Gateway) and `--council auto` upgrades automatically:
+Pass `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTER_API_KEY` (plus optional `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` for LiteLLM, Vercel AI Gateway, or Cloudflare AI Gateway) and select `--council llm` to enable external review.
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-... npx github:RiccardoBifulco/agenthack-council . --prove
+ANTHROPIC_API_KEY=sk-ant-... npx github:RiccardoBifulco/agenthack-council . --council llm --prove
 ```
 
 ---
@@ -161,7 +161,7 @@ jobs:
           sarif-file: 'agenthack-council.sarif'
 
       - name: Upload SARIF to GitHub Security
-        if: always()
+        if: ${{ !cancelled() && hashFiles('agenthack-council.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'agenthack-council.sarif'
@@ -175,8 +175,15 @@ Scanning `~/.claude`, `~/.cursor`, and `.mcp.json` requires strict trust boundar
 
 1. **Zero Runtime npm Dependencies:** Built purely on Node.js (`>= 18.18`) standard library modules — zero transitive npm packages to audit or trust.
 2. **Stage-1 Secret Pre-Redaction:** Raw tokens matched by `AHC-004` are masked (`sk-ant-a…[REDACTED]…N7p6`) in Stage 1 **before** `contextWindow` or `snippet` ever reaches an LLM Council prompt, terminal log, JSON file, or SARIF artifact.
-3. **Loopback-Only Binding (`127.0.0.1`):** Both the `--ui` web server and Canary Sandbox listener bind strictly to `127.0.0.1`.
-4. **Non-Executing Canary Prover:** `--prove` verifies credential and exfiltration targets against synthetic canary traps in an isolated temporary directory without executing untrusted repo code.
+3. **Loopback-Only Dashboard.** The local web server binds to `127.0.0.1` and accepts rescans as same-origin JSON requests.
+4. **Static Evidence.** `--prove` adds annotations to Council-confirmed findings. The annotations come from static inspection of the scanner's evidence.
+
+## Scan coverage and exit codes
+
+The scanner includes standard `.codex/config.toml` files and checks supported settings and MCP endpoints. `coverage` is `complete`, `partial`, or `empty`, and `scanIssues` lists inaccessible or unsupported targets and files skipped because of size or count limits. Partial and empty scans retain their findings and have a null score and grade.
+
+The CLI exits with `2` for incomplete coverage, or `1` when `--fail-on-confirmed` is enabled and the Council confirms a finding on a complete scan. Reports are written before those exits. Council confirmation reflects a static assessment. With `--council off`, findings are `UNREVIEWED`, the scan has no score or grade, and `--fail-on-confirmed` leaves them out of the CI gate.
+
 
 ---
 

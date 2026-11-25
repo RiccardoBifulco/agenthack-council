@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { runAudit } from '../index.js';
+import { runAudit, type AuditOptions } from '../index.js';
 import type { ScanReport } from '../types.js';
 import { VERSION } from '../version.js';
 import { buildSarifReport } from './sarif.js';
@@ -288,6 +288,8 @@ function buildHtml(): string {
       <a class="btn btn-ghost" href="/api/report" download="agenthack-council.json">⬇ JSON</a>
     </div>
   </header>
+  <div id="scanError" role="status" hidden></div>
+  <div id="coverage" role="status"></div>
   <section class="metrics" id="metrics"></section>
   <main class="workspace">
     <aside class="sidebar">
@@ -320,7 +322,12 @@ function buildHtml(): string {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ target })
     });
-    currentReport = await res.json();
+    const result = await res.json();
+    const status = document.getElementById('scanError');
+    status.hidden = res.ok;
+    status.textContent = res.ok ? '' : result.error;
+    if (!res.ok) return;
+    currentReport = result;
     selectedId = currentReport.findings?.[0]?.id || null;
     render();
   }
@@ -337,7 +344,7 @@ function buildHtml(): string {
   function getFilteredFindings() {
     if (!currentReport?.findings) return [];
     if (activeFilter === 'ALL') return currentReport.findings;
-    return currentReport.findings.filter(f => (f.council?.judge?.verdict || 'CONFIRMED') === activeFilter);
+    return currentReport.findings.filter(f => (f.verdict) === activeFilter);
   }
 
   async function copyPatch(btn) {
@@ -352,10 +359,12 @@ function buildHtml(): string {
 
   function render() {
     const r = currentReport;
-    const gradeColor = r.score >= 90 ? 'var(--green)' : r.score >= 70 ? 'var(--amber)' : 'var(--red)';
+    const gradeColor = r.score === null ? 'var(--muted)' : r.score >= 90 ? 'var(--green)' : r.score >= 70 ? 'var(--amber)' : 'var(--red)';
+    document.getElementById('coverage').textContent = r.coverage === 'complete' ? '' :
+      'Coverage: ' + r.coverage + (r.scanIssues.length ? ' · ' + r.scanIssues.map(x => x.path + ' (' + x.reason + ')').join(', ') : '');
     document.getElementById('metrics').innerHTML = \`
-      <div class="metric"><div class="metric-label">Security Posture</div><div class="metric-val" style="color:\${gradeColor}">\${esc(r.grade)} (\${r.score})</div></div>
-      <div class="metric"><div class="metric-label">Confirmed Exploitable</div><div class="metric-val" style="color:var(--red)">\${r.summary.confirmed}</div></div>
+      <div class="metric"><div class="metric-label">Security Posture</div><div class="metric-val" style="color:\${gradeColor}">\${r.score === null ? 'Not graded' : esc(r.grade) + ' (' + r.score + ')'}</div></div>
+      <div class="metric"><div class="metric-label">Council-confirmed</div><div class="metric-val" style="color:var(--red)">\${r.summary.confirmed}</div></div>
       <div class="metric"><div class="metric-label">Uncertain (Withheld)</div><div class="metric-val" style="color:var(--amber)">\${r.summary.uncertain}</div></div>
       <div class="metric"><div class="metric-label">Dismissed False Positives</div><div class="metric-val" style="color:var(--green)">\${r.summary.dismissed}</div></div>
       <div class="metric"><div class="metric-label">Council Engine (\${r.filesScanned} files · \${r.durationMs}ms)</div><div class="metric-val" style="font-size:13px;color:var(--purple);margin-top:10px">\${esc(r.modelName)}</div></div>
@@ -363,6 +372,7 @@ function buildHtml(): string {
 
     const tabs = [
       ['ALL', \`All (\${r.summary.totalCandidates})\`],
+      ['UNREVIEWED', 'Unreviewed (' + r.summary.unreviewed + ')'],
       ['CONFIRMED', \`Confirmed (\${r.summary.confirmed})\`],
       ['UNCERTAIN', \`Uncertain (\${r.summary.uncertain})\`],
       ['DISMISSED', \`Dismissed (\${r.summary.dismissed})\`],
@@ -374,19 +384,19 @@ function buildHtml(): string {
     const visible = getFilteredFindings();
     const list = document.getElementById('findingList');
     if (!visible.length) {
-      list.innerHTML = '<div style="padding:24px;color:var(--green)">✓ Zero findings in this filter.</div>';
+      list.innerHTML = '<div style="padding:24px">No findings in this filter.</div>';
       document.getElementById('detailPane').innerHTML = '';
       return;
     }
 
     list.innerHTML = visible.map((f) => {
-      const v = f.council?.judge?.verdict || 'CONFIRMED';
+      const v = f.verdict;
       const sev = (f.council?.judge?.finalSeverity || f.initialSeverity).toUpperCase();
       return \`
         <div class="finding-item \${f.id === selectedId ? 'active' : ''}" onclick="selectFinding('\${esc(f.id)}')">
           <div>
             <span class="pill pill-\${v}">\${v}</span>
-            \${f.proof?.triggeredCanary ? '<span class="pill pill-canary">🧪 CANARY</span>' : ''}
+            \${f.proof?.signal ? '<span class="pill pill-canary">Static evidence</span>' : ''}
             <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">\${sev} · \${esc(f.ruleId)}</span>
           </div>
           <div style="font-weight:600;margin-top:6px">\${esc(f.ruleName)}</div>
@@ -406,7 +416,7 @@ function buildHtml(): string {
   function renderDetail() {
     const f = currentReport.findings.find(x => x.id === selectedId);
     if (!f) return;
-    const v = f.council?.judge?.verdict || 'CONFIRMED';
+    const v = f.verdict;
     const c = f.council;
     document.getElementById('detailPane').innerHTML = \`
       <div>
@@ -418,9 +428,9 @@ function buildHtml(): string {
       <p style="color:var(--muted);margin-top:10px">\${esc(f.evidence)}</p>
       <pre>\${esc(f.contextWindow)}</pre>
 
-      \${f.proof?.executed ? \`
-        <div class="canary-banner \${f.proof.triggeredCanary ? '' : 'safe'}">
-          <strong>\${f.proof.triggeredCanary ? '🧪 CANARY SANDBOX PROOF: EXFILTRATION / CREDENTIAL TARGET CONFIRMED' : '🧪 CANARY SANDBOX: STATIC EXPOSURE ONLY (NO ACTIVE TRIGGER)'}</strong><br/>
+      \${f.proof ? \`
+        <div class="canary-banner">
+          <strong>Static evidence</strong><br/>
           \${esc(f.proof.details)}
         </div>
       \` : ''}
@@ -461,11 +471,19 @@ function buildHtml(): string {
 export async function startWebDashboard(
   initialReport: ScanReport,
   port = 4317,
-  prove = true,
+  auditOptions: AuditOptions = {},
 ): Promise<{ url: string; close: () => Promise<void> }> {
   let latestReport = initialReport;
+  let latestTargets = auditOptions.targets;
+  let origin: string;
+  let host: string;
+  let scanning = false;
 
   const server = http.createServer(async (req, res) => {
+    if (req.headers.host !== host) {
+      res.writeHead(403).end();
+      return;
+    }
     if (req.method === 'GET' && req.url === '/api/report') {
       res.writeHead(200, {
         'content-type': 'application/json',
@@ -485,20 +503,52 @@ export async function startWebDashboard(
     }
 
     if (req.method === 'POST' && req.url === '/api/scan') {
-      let body = '';
-      req.on('data', (chunk) => (body += chunk));
-      req.on('end', async () => {
+      const contentType = req.headers['content-type']?.split(';', 1)[0]?.trim();
+      if (contentType !== 'application/json' || (req.headers.origin && req.headers.origin !== origin)) {
+        res.writeHead(403, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Rescan requires a same-origin JSON request.' }));
+        return;
+      }
+
+      try {
+        let body = '';
+        req.setEncoding('utf8');
+        for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+          body += chunk;
+          if (body.length > 16384) {
+            req.resume();
+            res.writeHead(413, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Rescan request is too large.' }));
+            return;
+          }
+        }
+        const parsed = JSON.parse(body) as { target?: unknown } | null;
+        if (typeof parsed?.target !== 'string') throw new Error('Expected a target string.');
+        const requested = parsed.target.trim();
+        const targets = !requested || requested === latestReport.targetPath
+          ? latestTargets
+          : requested.split(',').map((item) => item.trim()).filter(Boolean);
+        if (targets?.length === 0 && requested && requested !== latestReport.targetPath) {
+          throw new Error('Expected at least one target path.');
+        }
+        if (scanning) {
+          res.writeHead(409, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'A scan is already running.' }));
+          return;
+        }
+        scanning = true;
         try {
-          const parsed = JSON.parse(body || '{}') as { target?: string };
-          const targets = parsed.target ? parsed.target.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
-          latestReport = await runAudit({ targets, prove });
+          latestReport = await runAudit({ ...auditOptions, targets });
+          latestTargets = targets;
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(JSON.stringify(latestReport));
-        } catch (err) {
-          res.writeHead(400, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ error: String(err) }));
+        } finally {
+          scanning = false;
         }
-      });
+      } catch (err) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+      }
       return;
     }
 
@@ -506,11 +556,19 @@ export async function startWebDashboard(
     res.end(buildHtml());
   });
 
-  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', () => resolve()));
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
   const addr = server.address();
   const actualPort = typeof addr === 'object' && addr ? addr.port : port;
+  host = '127.0.0.1:' + actualPort;
+  origin = 'http://' + host;
   return {
-    url: `http://127.0.0.1:${actualPort}`,
+    url: origin,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }

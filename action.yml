@@ -10,7 +10,7 @@ inputs:
     required: false
     default: '.'
   council:
-    description: 'Council mode: auto | llm | heuristic | off'
+    description: 'Council mode: auto | llm | heuristic | off (auto is offline without a provider choice)'
     required: false
     default: 'auto'
   provider:
@@ -18,7 +18,7 @@ inputs:
     required: false
     default: ''
   prove:
-    description: 'Run canary sandbox proof on confirmed findings'
+    description: 'Include static evidence annotations on Council-confirmed findings'
     required: false
     default: 'true'
   sarif-file:
@@ -26,7 +26,7 @@ inputs:
     required: false
     default: ''
   fail-on-confirmed:
-    description: 'Exit with code 1 when confirmed exploitable findings are detected'
+    description: 'Exit with code 1 when the Council confirms findings'
     required: false
     default: 'true'
 runs:
@@ -41,18 +41,32 @@ runs:
       run: npm ci && npm run build
     - name: Run Adversarial Council Audit
       shell: bash
+      env:
+        AHC_PATH: ${{ inputs.path }}
+        AHC_COUNCIL: ${{ inputs.council }}
+        AHC_PROVIDER: ${{ inputs.provider }}
+        AHC_PROVE: ${{ inputs.prove }}
+        AHC_SARIF_FILE: ${{ inputs.sarif-file }}
+        AHC_FAIL_ON_CONFIRMED: ${{ inputs.fail-on-confirmed }}
       run: |
-        ARGS=("${{ inputs.path }}" "--council" "${{ inputs.council }}")
-        if [ -n "${{ inputs.provider }}" ]; then
-          ARGS+=("--provider" "${{ inputs.provider }}")
+        set -euo pipefail
+        for value in "$AHC_PROVE" "$AHC_FAIL_ON_CONFIRMED"; do
+          case "$value" in
+            true|false) ;;
+            *) echo "Expected a boolean action input (true or false)." >&2; exit 2 ;;
+          esac
+        done
+        args=(--council "$AHC_COUNCIL")
+        if [[ -n "$AHC_PROVIDER" ]]; then
+          args+=(--provider "$AHC_PROVIDER")
         fi
-        if [ "${{ inputs.prove }}" = "true" ]; then
-          ARGS+=("--prove")
+        if [[ "$AHC_PROVE" == true ]]; then
+          args+=(--prove)
         fi
-        if [ -n "${{ inputs.sarif-file }}" ]; then
-          ARGS+=("--sarif" "--output" "${{ inputs.sarif-file }}")
+        if [[ -n "$AHC_SARIF_FILE" ]]; then
+          args+=(--sarif --output "$AHC_SARIF_FILE")
         fi
-        if [ "${{ inputs.fail-on-confirmed }}" = "true" ]; then
-          ARGS+=("--fail-on-confirmed")
+        if [[ "$AHC_FAIL_ON_CONFIRMED" == true ]]; then
+          args+=(--fail-on-confirmed)
         fi
-        node "${{ github.action_path }}/dist/src/cli.js" "${ARGS[@]}"
+        node "$GITHUB_ACTION_PATH/dist/src/cli.js" "${args[@]}" -- "$AHC_PATH"

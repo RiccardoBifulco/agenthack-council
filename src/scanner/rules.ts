@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { CandidateFinding, RuleMetadata, Severity, TargetCategory } from '../types.js';
 
@@ -104,6 +105,10 @@ export const RULES_CATALOG: RuleMetadata[] = [
   },
 ];
 
+function canonicalCodexConfig(filePath: string): boolean {
+  return filePath.replace(/\\/g, '/').endsWith('/.codex/config.toml');
+}
+
 export function classifyFile(filePath: string): TargetCategory | null {
   const base = path.basename(filePath);
   const lower = base.toLowerCase();
@@ -137,6 +142,8 @@ export function classifyFile(filePath: string): TargetCategory | null {
   ) {
     return 'agent-instructions';
   }
+
+  if (canonicalCodexConfig(filePath)) return 'agent-settings';
 
   if (
     (normalized.includes('/.claude/') ||
@@ -315,8 +322,10 @@ export function scanFileContent(
   const lines = content.split(/\r?\n/);
   const safeLines = lines.map(redactSecretsInText);
   const isMarkdown = category === 'skill-markdown' || category === 'agent-instructions';
+  const isCodexToml = canonicalCodexConfig(filePath);
   const fenceMap = isMarkdown ? computeMarkdownFenceMap(lines) : new Array<boolean>(lines.length).fill(false);
-  let seq = 0;
+  const canonicalPath = path.resolve(filePath);
+  const occurrences = new Map<string, number>();
 
   const push = (
     ruleId: string,
@@ -327,9 +336,12 @@ export function scanFileContent(
     cwe: string,
     extra?: { inCodeFence?: boolean; isPlaceholderHint?: boolean },
   ) => {
-    seq += 1;
+    const location = JSON.stringify([canonicalPath, ruleId, lineIdx + 1]);
+    const occurrence = (occurrences.get(location) ?? 0) + 1;
+    occurrences.set(location, occurrence);
+    const id = createHash('sha256').update(location).update(':' + occurrence).digest('hex');
     findings.push({
-      id: `${ruleId}-${path.basename(filePath)}-${lineIdx + 1}-${seq}`,
+      id,
       ruleId,
       ruleName,
       category,
@@ -339,7 +351,7 @@ export function scanFileContent(
       line: lineIdx + 1,
       snippet: (safeLines[lineIdx] ?? '').trim().slice(0, 220),
       contextWindow: getContextWindow(safeLines, lineIdx),
-      evidence,
+      evidence: redactSecretsInText(evidence),
       cwe,
       inCodeFence: extra?.inCodeFence ?? fenceMap[lineIdx] ?? false,
       isPlaceholderHint: extra?.isPlaceholderHint ?? false,
@@ -381,8 +393,14 @@ export function scanFileContent(
     }
   }
 
+  let inCodexEndpointTable = false;
+  let inCodexRoot = isCodexToml;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (isCodexToml && /^\s*\[/.test(line)) {
+      inCodexRoot = false;
+      inCodexEndpointTable = /^\s*\[\s*(?:mcp_servers|"mcp_servers"|'mcp_servers')\s*\.\s*(?:[\w-]+|"[^"]+"|'[^']+')\s*\]/.test(line);
+    }
 
     // AHC-001: Invisible Unicode / Bidi Prompt Smuggling
     if (
@@ -475,7 +493,7 @@ export function scanFileContent(
     if (
       (category === 'agent-settings' || category === 'mcp-config' || category === 'agent-hook') &&
       !/^\s*(?:#|\/\/|\*\*|[-*]\s+\*\*)/.test(line) &&
-      OVERPRIVILEGED_RE.test(line)
+      (OVERPRIVILEGED_RE.test(line) || (inCodexRoot && /^\s*sandbox_mode\s*=\s*["']danger-full-access["']/.test(line)))
     ) {
       push(
         'AHC-006',
@@ -522,15 +540,18 @@ export function scanFileContent(
     }
 
     // AHC-009: Insecure Remote MCP Transport / Ephemeral Tunnel
-    if (category === 'mcp-config') {
-      const urlMatch = INSECURE_MCP_URL_RE.exec(line);
+    if (category === 'mcp-config' || inCodexEndpointTable) {
+      const tomlUrl = inCodexEndpointTable && /^\s*(?:url|"url"|'url')\s*=\s*(["'])(.*?)\1/.exec(line);
+      const urlMatch = INSECURE_MCP_URL_RE.test(
+        isCodexToml ? (tomlUrl ? JSON.stringify({ url: tomlUrl[2] }) : '') : line,
+      );
       if (urlMatch) {
         push(
           'AHC-009',
           'Insecure Remote MCP Transport / Ephemeral Tunnel',
           'high',
           i,
-          `Remote MCP endpoint uses cleartext HTTP or ephemeral public tunnel (${urlMatch[1].slice(0, 80)})`,
+          'Remote MCP endpoint uses cleartext HTTP or an ephemeral public tunnel',
           'CWE-319',
         );
       }

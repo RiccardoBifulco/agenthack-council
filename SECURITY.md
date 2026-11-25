@@ -19,9 +19,10 @@ Instead, report it privately via **GitHub Private Vulnerability Reporting**:
 
 ## Built-in Security & Privacy Guarantees
 
-Because `agenthack-council` inspects developer machines (`~/.claude`, `~/.cursor`, `~/.codex`) and sensitive repositories, it enforces four strict architectural invariants:
+Because `agenthack-council` inspects developer machines (`~/.claude`, `~/.cursor`, `~/.codex`) and sensitive repositories, it uses the following controls.
 
 1. **Zero Runtime npm Dependencies:** Only Node.js built-in modules (`node:fs`, `node:http`, `node:crypto`, `node:child_process`) ship at runtime, eliminating transitive npm supply-chain risk.
 2. **Stage-1 Secret Pre-Redaction:** Plaintext API keys and credentials matched in Stage 1 (`AHC-004`) are masked (`sk-ant-a…[REDACTED]…N7p6`) in `snippet`, `contextWindow`, and `evidence` **before** Stage 2 ever constructs an LLM Council prompt or writes a JSON/SARIF report.
-3. **Loopback-Only Web Dashboard (`127.0.0.1`):** Both the `--ui` dashboard server and the ephemeral Canary Sandbox HTTP listener bind exclusively to `127.0.0.1`, never `0.0.0.0`.
-4. **Non-Executing Canary Prover:** `--prove` validates exfiltration and credential-targeting chains against synthetic canary tokens in an isolated temporary directory without executing untrusted repository scripts or shell hooks.
+3. **Offline by Default.** A configured API key alone never enables LLM review. An explicit LLM or provider selection allows the selected provider to receive matched excerpts and metadata. Secret masking applies to recognized credential patterns.
+4. **Loopback-Only Dashboard.** The dashboard binds to `127.0.0.1` and checks the host and origin for rescans.
+5. **Static Evidence.** `--prove` inspects source evidence without executing target code or contacting a canary sink.

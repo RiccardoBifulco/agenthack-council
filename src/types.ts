@@ -1,6 +1,12 @@
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 
 export type VerdictStatus = 'CONFIRMED' | 'UNCERTAIN' | 'DISMISSED';
+export type FindingVerdict = VerdictStatus | 'UNREVIEWED';
+
+export interface ScanIssue {
+  path: string;
+  reason: 'missing-target' | 'unsupported-target' | 'unreadable' | 'file-too-large' | 'file-limit';
+}
 
 export type TargetCategory =
   | 'mcp-config'
@@ -65,16 +71,22 @@ export interface CouncilReview {
   fallbackReason?: string;
 }
 
-export interface CanaryProof {
-  executed: boolean;
-  triggeredCanary: boolean;
-  canaryType?: 'env-secret' | 'ssh-key' | 'network-exfil' | 'filesystem-escape';
+export interface StaticEvidence {
+  method: 'static';
+  signal?: 'credential-reference' | 'network-reference' | 'suspicious-directive';
   details: string;
+  /** @deprecated No code is executed during static inspection. */
+  executed: false;
+  /** @deprecated Static inspection never triggers a canary. */
+  triggeredCanary: false;
 }
 
+export type CanaryProof = StaticEvidence;
+
 export interface EvaluatedFinding extends CandidateFinding {
+  verdict: FindingVerdict;
   council?: CouncilReview;
-  proof?: CanaryProof;
+  proof?: StaticEvidence;
 }
 
 export interface ScanReport {
@@ -83,14 +95,17 @@ export interface ScanReport {
   scannedAt: string;
   durationMs: number;
   filesScanned: number;
+  coverage: 'complete' | 'partial' | 'empty';
+  scanIssues: ScanIssue[];
   councilMode: 'llm' | 'heuristic' | 'off';
   modelName: string;
   fallbackWarning?: string;
-  grade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
-  score: number;
+  grade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F' | null;
+  score: number | null;
   summary: {
     totalCandidates: number;
     confirmed: number;
+    unreviewed: number;
     uncertain: number;
     dismissed: number;
     bySeverity: Record<Severity, number>;

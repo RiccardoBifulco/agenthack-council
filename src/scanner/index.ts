@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { CandidateFinding } from '../types.js';
+import type { CandidateFinding, ScanIssue } from '../types.js';
 import { classifyFile, scanFileContent } from './rules.js';
 
 const IGNORED_DIRS = new Set([
@@ -63,6 +63,7 @@ const HIGH_PRIORITY_DIRS = new Set([
 
 const LOW_PRIORITY_DIRS = new Set(['plugins', 'vendor_imports', 'marketplaces', 'cache']);
 
+const MAX_FILES_PER_TARGET = 6000;
 const MAX_FILE_BYTES = 512 * 1024; // 512 KB
 
 const MCP_SERVER_CODE_MARKERS =
@@ -71,6 +72,7 @@ const MCP_SERVER_CODE_MARKERS =
 export interface StaticScanResult {
   filesScanned: number;
   candidates: CandidateFinding[];
+  scanIssues: ScanIssue[];
 }
 
 function dirPriority(name: string): number {
@@ -79,12 +81,15 @@ function dirPriority(name: string): number {
   return 1;
 }
 
-async function walkDir(rootDir: string, currentDir: string, out: string[], maxFiles = 6000): Promise<void> {
+async function walkDir(currentDir: string, out: string[], issues: ScanIssue[]): Promise<void> {
+  // Collect one extra eligible path so a tree of exactly MAX_FILES_PER_TARGET is complete.
+  const maxFiles = MAX_FILES_PER_TARGET + 1;
   if (out.length >= maxFiles) return;
   let entries;
   try {
     entries = await fs.readdir(currentDir, { withFileTypes: true });
   } catch {
+    issues.push({ path: currentDir, reason: 'unreadable' });
     return;
   }
 
@@ -109,7 +114,7 @@ async function walkDir(rootDir: string, currentDir: string, out: string[], maxFi
   subdirs.sort((a, b) => dirPriority(a) - dirPriority(b) || a.localeCompare(b));
   for (const dirName of subdirs) {
     if (out.length >= maxFiles) break;
-    await walkDir(rootDir, path.join(currentDir, dirName), out, maxFiles);
+    await walkDir(path.join(currentDir, dirName), out, issues);
   }
 }
 
@@ -140,59 +145,73 @@ export async function discoverLocalAgentPaths(): Promise<string[]> {
 }
 
 export async function runStaticScan(targetPaths: string[]): Promise<StaticScanResult> {
-  const filesToScan: Array<{ fullPath: string; baseRoot: string }> = [];
+  const filesToScan = new Map<string, string>();
+  const explicitFiles = new Set<string>();
+  const scanIssues: ScanIssue[] = [];
 
   for (const rawTarget of targetPaths) {
-    const resolved = path.resolve(rawTarget);
+    const requested = path.resolve(rawTarget);
+    let resolved: string;
     let stat;
     try {
+      resolved = await fs.realpath(requested);
       stat = await fs.stat(resolved);
-    } catch {
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      scanIssues.push({
+        path: requested,
+        reason: code === 'ENOENT' || code === 'ENOTDIR' ? 'missing-target' : 'unreadable',
+      });
       continue;
     }
 
-    if (stat.isFile()) {
-      filesToScan.push({ fullPath: resolved, baseRoot: path.dirname(resolved) });
-    } else if (stat.isDirectory()) {
+    if (stat.isDirectory()) {
       const discovered: string[] = [];
-      await walkDir(resolved, resolved, discovered);
-      for (const f of discovered) {
-        filesToScan.push({ fullPath: f, baseRoot: resolved });
+      await walkDir(resolved, discovered, scanIssues);
+      if (discovered.length > MAX_FILES_PER_TARGET) {
+        discovered.pop();
+        scanIssues.push({ path: requested, reason: 'file-limit' });
       }
+      for (const file of discovered) {
+        if (!filesToScan.has(file)) filesToScan.set(file, resolved);
+      }
+    } else if (!stat.isFile() || !classifyFile(resolved)) {
+      scanIssues.push({ path: requested, reason: 'unsupported-target' });
+    } else {
+      explicitFiles.add(resolved);
+      if (!filesToScan.has(resolved)) filesToScan.set(resolved, path.dirname(resolved));
     }
   }
 
   let filesScanned = 0;
   const candidates: CandidateFinding[] = [];
 
-  for (const { fullPath, baseRoot } of filesToScan) {
+  for (const [fullPath, baseRoot] of filesToScan) {
     const category = classifyFile(fullPath);
     if (!category) continue;
 
-    let stat;
-    try {
-      stat = await fs.stat(fullPath);
-    } catch {
-      continue;
-    }
-    if (stat.size > MAX_FILE_BYTES) continue;
-
     let content: string;
     try {
+      const stat = await fs.stat(fullPath);
+      if (stat.size > MAX_FILE_BYTES) {
+        scanIssues.push({ path: fullPath, reason: 'file-too-large' });
+        continue;
+      }
       content = await fs.readFile(fullPath, 'utf8');
     } catch {
+      scanIssues.push({ path: fullPath, reason: 'unreadable' });
       continue;
     }
 
     if (category === 'mcp-server-code' && !MCP_SERVER_CODE_MARKERS.test(content)) {
+      if (explicitFiles.has(fullPath)) scanIssues.push({ path: fullPath, reason: 'unsupported-target' });
       continue;
     }
 
     filesScanned += 1;
-    const rel = path.relative(baseRoot, fullPath) || path.basename(fullPath);
-    const fileFindings = scanFileContent(fullPath, rel, content, category);
-    candidates.push(...fileFindings);
+    const relativePath = path.relative(baseRoot, fullPath);
+    candidates.push(...scanFileContent(fullPath, relativePath, content, category));
   }
 
-  return { filesScanned, candidates };
+  return { filesScanned, candidates, scanIssues };
 }

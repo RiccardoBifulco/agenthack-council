@@ -1,11 +1,11 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { RULES_CATALOG } from '../scanner/rules.js';
-import type { EvaluatedFinding, ScanReport, Severity } from '../types.js';
+import type { EvaluatedFinding, FindingVerdict, ScanReport, Severity } from '../types.js';
 import { VERSION } from '../version.js';
 
-function toSarifLevel(verdict: string, sev: Severity): 'error' | 'warning' | 'note' {
-  if (verdict === 'UNCERTAIN') return 'note';
+function toSarifLevel(verdict: FindingVerdict, sev: Severity): 'error' | 'warning' | 'note' {
+  if (verdict === 'UNCERTAIN' || verdict === 'UNREVIEWED') return 'note';
   if (sev === 'critical' || sev === 'high') return 'error';
   if (sev === 'medium') return 'warning';
   return 'note';
@@ -24,8 +24,8 @@ function formatMessage(f: EvaluatedFinding): string {
   if (f.council) {
     parts.push(`Council Verdict: ${f.council.judge.verdict} (${f.council.modelUsed}) — ${f.council.judge.rationale}`);
   }
-  if (f.proof?.executed && f.proof.triggeredCanary) {
-    parts.push(`Canary Sandbox Proof: ${f.proof.details}`);
+  if (f.proof) {
+    parts.push(`Static evidence: ${f.proof.details}`);
   }
   return parts.join(' | ');
 }
@@ -54,11 +54,11 @@ export function buildSarifReport(report: ScanReport): Record<string, unknown> {
   const ruleIndexMap = new Map<string, number>(RULES_CATALOG.map((r, idx) => [r.id, idx]));
 
   const activeFindings = report.findings.filter(
-    (f) => (f.council?.judge.verdict ?? 'CONFIRMED') !== 'DISMISSED',
+    (f) => f.verdict !== 'DISMISSED',
   );
 
   const results = activeFindings.map((f) => {
-    const verdict = f.council?.judge.verdict ?? 'CONFIRMED';
+    const verdict = f.verdict;
     const sev = f.council?.judge.finalSeverity ?? f.initialSeverity;
     const uri = normalizeSarifUri(f.relativePath, f.filePath);
     const fingerprint = crypto
@@ -92,12 +92,13 @@ export function buildSarifReport(report: ScanReport): Record<string, unknown> {
         primaryLocationLineHash: fingerprint,
       },
       properties: {
+        findingId: f.id,
         category: f.category,
         cwe: f.cwe,
         verdict,
-        confidence: f.council?.judge.confidence ?? 1,
+        confidence: f.council?.judge.confidence,
         councilModel: f.council?.modelUsed ?? 'none',
-        canaryTriggered: Boolean(f.proof?.triggeredCanary),
+        staticEvidence: f.proof?.signal,
         minimalPatch: f.council?.judge.minimalPatch,
       },
     };
@@ -117,6 +118,8 @@ export function buildSarifReport(report: ScanReport): Record<string, unknown> {
           },
         },
         properties: {
+          coverage: report.coverage,
+          scanIssues: report.scanIssues.map(({ reason }) => reason),
           grade: report.grade,
           score: report.score,
           councilMode: report.councilMode,

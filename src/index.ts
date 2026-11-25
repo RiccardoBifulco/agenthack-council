@@ -3,12 +3,13 @@ import {
   resolveCouncilRoles,
   runHeuristicCouncil,
   runLLMCouncilBatch,
+  wantsLlmCouncil,
 } from './council/index.js';
 import { closeActiveProviderSessions, type ProviderName } from './council/providers.js';
-import { runCanaryProof } from './prover/index.js';
+import { inspectStaticEvidence } from './prover/index.js';
 import { discoverLocalAgentPaths, runStaticScan } from './scanner/index.js';
 import { RULES_CATALOG } from './scanner/rules.js';
-import type { CandidateFinding, EvaluatedFinding, ScanReport, Severity } from './types.js';
+import type { CandidateFinding, EvaluatedFinding, FindingVerdict, ScanReport, Severity } from './types.js';
 import { buildSarifReport } from './ui/sarif.js';
 import { VERSION } from './version.js';
 
@@ -27,12 +28,12 @@ export interface AuditOptions {
 }
 
 const SEV_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
-const VERDICT_RANK: Record<string, number> = { CONFIRMED: 0, UNCERTAIN: 1, DISMISSED: 2 };
+const VERDICT_RANK: Record<FindingVerdict, number> = { CONFIRMED: 0, UNREVIEWED: 1, UNCERTAIN: 2, DISMISSED: 3 };
 
 function sortEvaluatedFindings(list: EvaluatedFinding[]): EvaluatedFinding[] {
   return [...list].sort((a, b) => {
-    const va = VERDICT_RANK[a.council?.judge.verdict ?? 'CONFIRMED'] ?? 0;
-    const vb = VERDICT_RANK[b.council?.judge.verdict ?? 'CONFIRMED'] ?? 0;
+    const va = VERDICT_RANK[a.verdict];
+    const vb = VERDICT_RANK[b.verdict];
     if (va !== vb) return va - vb;
     const sa = SEV_RANK[a.council?.judge.finalSeverity ?? a.initialSeverity] ?? 3;
     const sb = SEV_RANK[b.council?.judge.finalSeverity ?? b.initialSeverity] ?? 3;
@@ -47,9 +48,9 @@ function computeScoreAndGrade(findings: EvaluatedFinding[]): {
 } {
   let penalty = 0;
   for (const f of findings) {
-    const verdict = f.council?.judge.verdict ?? 'CONFIRMED';
+    const verdict = f.verdict;
     if (verdict === 'DISMISSED') continue;
-    const mult = verdict === 'UNCERTAIN' ? 0.35 : 1;
+    const mult = verdict === 'CONFIRMED' ? 1 : 0.35;
     const sev = f.council?.judge.finalSeverity ?? f.initialSeverity;
     const weight = sev === 'critical' ? 28 : sev === 'high' ? 16 : sev === 'medium' ? 8 : 3;
     penalty += Math.round(weight * mult);
@@ -69,25 +70,12 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
 
   progress?.(`Scanning ${targets.length} target path(s) across 10 agent security rules...`);
   const scanStart = Date.now();
-  const { filesScanned, candidates } = await runStaticScan(targets);
+  const { filesScanned, candidates, scanIssues } = await runStaticScan(targets);
   const scanMs = Date.now() - scanStart;
   progress?.(`Scanned ${filesScanned} agent/MCP files in ${scanMs}ms -> ${candidates.length} candidate(s)`);
 
   const councilModePref = options.councilMode ?? 'auto';
-  const hasExplicitProvider = Boolean(
-    options.provider || options.advocateSpec || options.skepticSpec || options.judgeSpec,
-  );
-  const wantsLlm =
-    councilModePref === 'llm' ||
-    hasExplicitProvider ||
-    (councilModePref === 'auto' &&
-      Boolean(
-        process.env.ANTHROPIC_API_KEY ||
-          process.env.OPENAI_API_KEY ||
-          process.env.GEMINI_API_KEY ||
-          process.env.OPENROUTER_API_KEY ||
-          process.env.OLLAMA_MODEL,
-      ));
+  const wantsLlm = wantsLlmCouncil({ ...options, mode: councilModePref });
 
   const maxLlm = options.maxLlmFindings ?? 15;
   let actualMode: ScanReport['councilMode'] = councilModePref === 'off' ? 'off' : 'heuristic';
@@ -101,7 +89,7 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
       const llmQueue: CandidateFinding[] = [];
 
       for (const c of candidates) {
-        if (!wantsLlm || isFastDismissableCandidate(c) || llmQueue.length >= maxLlm) {
+        if (!wantsLlm || (!options.strictLlm && isFastDismissableCandidate(c)) || llmQueue.length >= maxLlm) {
           councilById.set(c.id, runHeuristicCouncil(c));
         } else {
           llmQueue.push(c);
@@ -120,51 +108,56 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
         });
 
         if (!roles) {
-          const msg =
-            'No LLM provider or CLI found. Pass --provider antigravity | claude-cli | codex-cli | gemini-cli | ollama, or set an API key.';
-          if (councilModePref === 'llm' || hasExplicitProvider || options.strictLlm) {
-            throw new Error(msg);
+          throw new Error('No LLM provider or CLI found. Select a configured provider or use --council heuristic.');
+        }
+
+        try {
+          const batchReviews = await runLLMCouncilBatch(llmQueue, roles, progress);
+          const unevaluatedCount = llmQueue.length - batchReviews.size;
+          if (unevaluatedCount > 0) {
+            const reason = 'Incomplete or invalid LLM evaluation for ' + unevaluatedCount + ' finding(s)';
+            if (options.strictLlm) throw new Error(reason);
+            fallbackWarning = reason + '; used council-heuristic-v1 for those findings';
+            progress?.('⚠ ' + fallbackWarning);
           }
           for (const c of llmQueue) {
-            councilById.set(c.id, runHeuristicCouncil(c));
+            const review = batchReviews.get(c.id);
+            if (review) {
+              actualMode = 'llm';
+              modelName = review.modelUsed;
+              councilById.set(c.id, review);
+            } else {
+              const fallback = runHeuristicCouncil(c);
+              fallback.fallbackReason = fallbackWarning;
+              councilById.set(c.id, fallback);
+            }
           }
-        } else {
-          try {
-            const batchReviews = await runLLMCouncilBatch(llmQueue, roles, progress);
-            for (const c of llmQueue) {
-              const rev = batchReviews.get(c.id) ?? runHeuristicCouncil(c);
-              councilById.set(c.id, rev);
-              if (rev.mode === 'llm') {
-                actualMode = 'llm';
-                modelName = rev.modelUsed;
-              }
-            }
-          } catch (err) {
-            const reason = err instanceof Error ? err.message : String(err);
-            if (options.strictLlm) {
-              throw new Error(`LLM Council failed (${reason})`);
-            }
-            fallbackWarning = `LLM provider unavailable (${reason}); fell back to council-heuristic-v1`;
-            progress?.(`⚠ ${fallbackWarning}`);
-            for (const c of llmQueue) {
-              const fb = runHeuristicCouncil(c);
-              fb.fallbackReason = fallbackWarning;
-              councilById.set(c.id, fb);
-            }
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          if (options.strictLlm) {
+            throw new Error('LLM Council failed (' + reason + ')');
+          }
+          fallbackWarning = 'LLM provider unavailable (' + reason + '); fell back to council-heuristic-v1';
+          progress?.('⚠ ' + fallbackWarning);
+          for (const c of llmQueue) {
+            const fb = runHeuristicCouncil(c);
+            fb.fallbackReason = fallbackWarning;
+            councilById.set(c.id, fb);
           }
         }
       }
     }
   } finally {
-    closeActiveProviderSessions();
+    if (wantsLlm) closeActiveProviderSessions();
   }
 
   const rawEvaluated: EvaluatedFinding[] = [];
   for (const c of candidates) {
     const council = councilById.get(c.id);
-    const item: EvaluatedFinding = { ...c, council };
-    if (options.prove && (council?.judge.verdict ?? 'CONFIRMED') === 'CONFIRMED') {
-      item.proof = await runCanaryProof(item);
+    const verdict = council?.judge.verdict ?? 'UNREVIEWED';
+    const item: EvaluatedFinding = { ...c, verdict, council };
+    if (options.prove && verdict === 'CONFIRMED') {
+      item.proof = inspectStaticEvidence(item);
     }
     rawEvaluated.push(item);
   }
@@ -173,15 +166,18 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
 
   const bySeverity: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
   let confirmed = 0;
+  let unreviewed = 0;
   let uncertain = 0;
   let dismissed = 0;
 
   for (const f of evaluated) {
-    const v = f.council?.judge.verdict ?? 'CONFIRMED';
+    const v = f.verdict;
     if (v === 'CONFIRMED') {
       confirmed += 1;
       const sev = f.council?.judge.finalSeverity ?? f.initialSeverity;
       bySeverity[sev] += 1;
+    } else if (v === 'UNREVIEWED') {
+      unreviewed += 1;
     } else if (v === 'UNCERTAIN') {
       uncertain += 1;
     } else {
@@ -189,7 +185,10 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
     }
   }
 
-  const { score, grade } = computeScoreAndGrade(evaluated);
+  const coverage = filesScanned === 0 ? 'empty' : scanIssues.length ? 'partial' : 'complete';
+  const { score, grade } = coverage === 'complete' && actualMode !== 'off'
+    ? computeScoreAndGrade(evaluated)
+    : { score: null, grade: null };
 
   return {
     version: VERSION,
@@ -197,6 +196,8 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
     scannedAt: new Date().toISOString(),
     durationMs: Date.now() - t0,
     filesScanned,
+    coverage,
+    scanIssues,
     councilMode: actualMode,
     modelName,
     fallbackWarning,
@@ -205,6 +206,7 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
     summary: {
       totalCandidates: evaluated.length,
       confirmed,
+      unreviewed,
       uncertain,
       dismissed,
       bySeverity,
