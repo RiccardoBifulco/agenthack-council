@@ -364,6 +364,7 @@ function buildHtml(): string {
       'Coverage: ' + r.coverage + (r.scanIssues.length ? ' · ' + r.scanIssues.map(x => x.path + ' (' + x.reason + ')').join(', ') : '');
     document.getElementById('metrics').innerHTML = \`
       <div class="metric"><div class="metric-label">Security Posture</div><div class="metric-val" style="color:\${gradeColor}">\${r.score === null ? 'Not graded' : esc(r.grade) + ' (' + r.score + ')'}</div></div>
+      <div class="metric"><div class="metric-label">Deterministic CI policy</div><div class="metric-val" style="color:var(--red)">\${r.summary.ciBlocking}</div></div>
       <div class="metric"><div class="metric-label">Council-confirmed</div><div class="metric-val" style="color:var(--red)">\${r.summary.confirmed}</div></div>
       <div class="metric"><div class="metric-label">Uncertain (Withheld)</div><div class="metric-val" style="color:var(--amber)">\${r.summary.uncertain}</div></div>
       <div class="metric"><div class="metric-label">Dismissed False Positives</div><div class="metric-val" style="color:var(--green)">\${r.summary.dismissed}</div></div>
@@ -396,6 +397,7 @@ function buildHtml(): string {
         <div class="finding-item \${f.id === selectedId ? 'active' : ''}" onclick="selectFinding('\${esc(f.id)}')">
           <div>
             <span class="pill pill-\${v}">\${v}</span>
+            \${f.ciBlocking ? '<span class="pill pill-canary">CI policy</span>' : ''}
             \${f.proof?.signal ? '<span class="pill pill-canary">Static evidence</span>' : ''}
             <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">\${sev} · \${esc(f.ruleId)}</span>
           </div>

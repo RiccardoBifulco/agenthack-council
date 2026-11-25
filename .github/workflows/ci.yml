@@ -57,7 +57,7 @@ jobs:
         run: |
           node --input-type=module -e 'import fs from "node:fs"; const report = JSON.parse(fs.readFileSync("action smoke/report.sarif", "utf8")); if (report.runs[0].properties.coverage !== "complete") process.exit(1)'
       - name: Generate SARIF 2.1.0 Report
-        run: node dist/src/cli.js . --council heuristic --prove --sarif --output agenthack-council.sarif --fail-on-confirmed
+        run: node dist/src/cli.js . --council heuristic --prove --sarif --output agenthack-council.sarif --fail-on-policy
       - name: Upload SARIF to GitHub Code Scanning
         if: ${{ !cancelled() && hashFiles('agenthack-council.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@v4

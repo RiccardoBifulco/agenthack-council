@@ -137,7 +137,7 @@ ANTHROPIC_API_KEY=sk-ant-... npx github:RiccardoBifulco/agenthack-council . --co
 
 ## 🔄 GitHub Action & Code Scanning (`SARIF 2.1.0`)
 
-Block poisoned `SKILL.md` PRs, leaked `.mcp.json` keys, and hidden Unicode prompt injections in CI — and publish confirmed findings directly to the **GitHub Security → Code Scanning** tab (`DISMISSED` false positives are automatically suppressed!):
+The Action can fail builds based on static scanner results and local, deterministic context checks. Council verdicts are advisory. SARIF keeps policy findings visible even when the Council dismisses them.
 
 ```yaml
 name: Agent Security Audit
@@ -176,13 +176,13 @@ Scanning `~/.claude`, `~/.cursor`, and `.mcp.json` requires strict trust boundar
 1. **Zero Runtime npm Dependencies:** Built purely on Node.js (`>= 18.18`) standard library modules — zero transitive npm packages to audit or trust.
 2. **Stage-1 Secret Pre-Redaction:** Raw tokens matched by `AHC-004` are masked (`sk-ant-a…[REDACTED]…N7p6`) in Stage 1 **before** `contextWindow` or `snippet` ever reaches an LLM Council prompt, terminal log, JSON file, or SARIF artifact.
 3. **Loopback-Only Dashboard.** The local web server binds to `127.0.0.1` and accepts rescans as same-origin JSON requests.
-4. **Static Evidence.** `--prove` adds annotations to Council-confirmed findings. The annotations come from static inspection of the scanner's evidence.
+4. **Static Evidence.** `--prove` adds annotations to deterministic CI policy findings. The annotations come from static inspection of the scanner's evidence.
 
 ## Scan coverage and exit codes
 
 The scanner includes standard `.codex/config.toml` files and checks supported settings and MCP endpoints. `coverage` is `complete`, `partial`, or `empty`, and `scanIssues` lists inaccessible or unsupported targets and files skipped because of size or count limits. Partial and empty scans retain their findings and have a null score and grade.
 
-The CLI exits with `2` for incomplete coverage, or `1` when `--fail-on-confirmed` is enabled and the Council confirms a finding on a complete scan. Reports are written before those exits. Council confirmation reflects a static assessment. With `--council off`, findings are `UNREVIEWED`, the scan has no score or grade, and `--fail-on-confirmed` leaves them out of the CI gate.
+The CLI exits with `2` for incomplete coverage. On complete scans, `--fail-on-policy` exits with `1` when the local deterministic checks flag a finding. `--fail-on-confirmed` remains an alias, and the Action keeps its `fail-on-confirmed` input for compatibility. Reports include a `ciBlocking` field and count. The gate uses the same local checks even with `--council off`. LLM verdicts and provider failures are advisory, including when `--strict-llm` is supplied alongside the gate.
 
 
 ---

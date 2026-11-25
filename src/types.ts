@@ -85,6 +85,7 @@ export type CanaryProof = StaticEvidence;
 
 export interface EvaluatedFinding extends CandidateFinding {
   verdict: FindingVerdict;
+  ciBlocking: boolean;
   council?: CouncilReview;
   proof?: StaticEvidence;
 }
@@ -104,6 +105,7 @@ export interface ScanReport {
   score: number | null;
   summary: {
     totalCandidates: number;
+    ciBlocking: number;
     confirmed: number;
     unreviewed: number;
     uncertain: number;

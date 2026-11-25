@@ -22,7 +22,7 @@
     "test": "npm run build && node --test dist/tests/*.test.js",
     "demo": "npm run build && node dist/src/cli.js demo",
     "demo:ui": "npm run build && node dist/src/cli.js demo --ui",
-    "self-audit": "npm run build && node dist/src/cli.js . --council heuristic --prove --fail-on-confirmed"
+    "self-audit": "npm run build && node dist/src/cli.js . --council heuristic --prove --fail-on-policy"
   },
   "keywords": [
     "ai-security",

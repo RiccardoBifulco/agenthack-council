@@ -82,6 +82,8 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
   let modelName = councilModePref === 'off' ? 'none' : 'council-heuristic-v1';
   let fallbackWarning: string | undefined;
 
+  // The CI policy uses the same local rules and context checks in every Council mode.
+  const policyById = new Map(candidates.map((candidate) => [candidate.id, runHeuristicCouncil(candidate)]));
   const councilById = new Map<string, EvaluatedFinding['council']>();
 
   try {
@@ -90,28 +92,24 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
 
       for (const c of candidates) {
         if (!wantsLlm || (!options.strictLlm && isFastDismissableCandidate(c)) || llmQueue.length >= maxLlm) {
-          councilById.set(c.id, runHeuristicCouncil(c));
+          councilById.set(c.id, policyById.get(c.id));
         } else {
           llmQueue.push(c);
         }
       }
 
       if (llmQueue.length > 0) {
-        const roles = resolveCouncilRoles({
-          mode: councilModePref,
-          provider: options.provider,
-          model: options.model,
-          advocateSpec: options.advocateSpec,
-          skepticSpec: options.skepticSpec,
-          judgeSpec: options.judgeSpec,
-          strictLlm: options.strictLlm,
-        });
-
-        if (!roles) {
-          throw new Error('No LLM provider or CLI found. Select a configured provider or use --council heuristic.');
-        }
-
         try {
+          const roles = resolveCouncilRoles({
+            mode: councilModePref,
+            provider: options.provider,
+            model: options.model,
+            advocateSpec: options.advocateSpec,
+            skepticSpec: options.skepticSpec,
+            judgeSpec: options.judgeSpec,
+            strictLlm: options.strictLlm,
+          });
+          if (!roles) throw new Error('No configured LLM provider or CLI found');
           const batchReviews = await runLLMCouncilBatch(llmQueue, roles, progress);
           const unevaluatedCount = llmQueue.length - batchReviews.size;
           if (unevaluatedCount > 0) {
@@ -127,8 +125,7 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
               modelName = review.modelUsed;
               councilById.set(c.id, review);
             } else {
-              const fallback = runHeuristicCouncil(c);
-              fallback.fallbackReason = fallbackWarning;
+              const fallback = { ...policyById.get(c.id)!, fallbackReason: fallbackWarning };
               councilById.set(c.id, fallback);
             }
           }
@@ -140,8 +137,7 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
           fallbackWarning = 'LLM provider unavailable (' + reason + '); fell back to council-heuristic-v1';
           progress?.('⚠ ' + fallbackWarning);
           for (const c of llmQueue) {
-            const fb = runHeuristicCouncil(c);
-            fb.fallbackReason = fallbackWarning;
+            const fb = { ...policyById.get(c.id)!, fallbackReason: fallbackWarning };
             councilById.set(c.id, fb);
           }
         }
@@ -155,8 +151,9 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
   for (const c of candidates) {
     const council = councilById.get(c.id);
     const verdict = council?.judge.verdict ?? 'UNREVIEWED';
-    const item: EvaluatedFinding = { ...c, verdict, council };
-    if (options.prove && verdict === 'CONFIRMED') {
+    const ciBlocking = policyById.get(c.id)?.judge.verdict === 'CONFIRMED';
+    const item: EvaluatedFinding = { ...c, verdict, ciBlocking, council };
+    if (options.prove && ciBlocking) {
       item.proof = inspectStaticEvidence(item);
     }
     rawEvaluated.push(item);
@@ -205,6 +202,7 @@ export async function runAudit(options: AuditOptions = {}): Promise<ScanReport> 
     score,
     summary: {
       totalCandidates: evaluated.length,
+      ciBlocking: evaluated.filter((finding) => finding.ciBlocking).length,
       confirmed,
       unreviewed,
       uncertain,

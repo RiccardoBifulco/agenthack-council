@@ -1,11 +1,11 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { RULES_CATALOG } from '../scanner/rules.js';
-import type { EvaluatedFinding, FindingVerdict, ScanReport, Severity } from '../types.js';
+import type { EvaluatedFinding, ScanReport, Severity } from '../types.js';
 import { VERSION } from '../version.js';
 
-function toSarifLevel(verdict: FindingVerdict, sev: Severity): 'error' | 'warning' | 'note' {
-  if (verdict === 'UNCERTAIN' || verdict === 'UNREVIEWED') return 'note';
+function toSarifLevel(ciBlocking: boolean, sev: Severity): 'error' | 'warning' | 'note' {
+  if (!ciBlocking) return 'note';
   if (sev === 'critical' || sev === 'high') return 'error';
   if (sev === 'medium') return 'warning';
   return 'note';
@@ -54,12 +54,11 @@ export function buildSarifReport(report: ScanReport): Record<string, unknown> {
   const ruleIndexMap = new Map<string, number>(RULES_CATALOG.map((r, idx) => [r.id, idx]));
 
   const activeFindings = report.findings.filter(
-    (f) => f.verdict !== 'DISMISSED',
+    (f) => f.ciBlocking || f.verdict !== 'DISMISSED',
   );
 
   const results = activeFindings.map((f) => {
     const verdict = f.verdict;
-    const sev = f.council?.judge.finalSeverity ?? f.initialSeverity;
     const uri = normalizeSarifUri(f.relativePath, f.filePath);
     const fingerprint = crypto
       .createHash('sha256')
@@ -70,7 +69,7 @@ export function buildSarifReport(report: ScanReport): Record<string, unknown> {
     return {
       ruleId: f.ruleId,
       ruleIndex: ruleIndexMap.get(f.ruleId) ?? 0,
-      level: toSarifLevel(verdict, sev),
+      level: toSarifLevel(f.ciBlocking, f.initialSeverity),
       message: {
         text: formatMessage(f),
       },
@@ -96,6 +95,7 @@ export function buildSarifReport(report: ScanReport): Record<string, unknown> {
         category: f.category,
         cwe: f.cwe,
         verdict,
+        ciBlocking: f.ciBlocking,
         confidence: f.council?.judge.confidence,
         councilModel: f.council?.modelUsed ?? 'none',
         staticEvidence: f.proof?.signal,

@@ -28,13 +28,14 @@ Options:
   --council <mode>        Council mode: auto | llm | heuristic | off (auto is offline without a provider choice)
   --max-llm <number>      Max candidates sent to live LLM Council per scan (default: 15)
   --strict-llm            Fail instead of falling back to heuristic if LLM review fails or returns incomplete results
-  --prove                 Add static evidence annotations to Council-confirmed findings
+  --prove                 Add static evidence annotations to CI policy findings
   --ui                    Launch interactive dark-mode Web Dashboard (http://127.0.0.1:4317)
   --port <number>         Port for --ui dashboard (default: 4317)
   --json                  Output structured JSON report to stdout
   --sarif                 Output SARIF 2.1.0 report to stdout (for GitHub Code Scanning)
   -o, --output <file>     Write JSON or SARIF report to file (inferred from --sarif or .sarif ext)
-  --fail-on-confirmed     Exit with code 1 if the Council confirms a finding
+  --fail-on-policy        Exit with code 1 for a deterministic CI policy finding
+  --fail-on-confirmed     Alias for --fail-on-policy
   --verbose               Print all dismissed false-positive details in CLI output
   -v, --version           Print version
   -h, --help              Show this help
@@ -67,7 +68,7 @@ async function main(): Promise<void> {
   let jsonOut = false;
   let sarifOut = false;
   let outputFile: string | undefined;
-  let failOnConfirmed = false;
+  let failOnPolicy = false;
   let verbose = false;
   let port = 4317;
   const positional: string[] = [];
@@ -109,8 +110,8 @@ async function main(): Promise<void> {
       sarifOut = true;
     } else if ((a === '-o' || a === '--output') && args[i + 1]) {
       outputFile = args[++i];
-    } else if (a === '--fail-on-confirmed') {
-      failOnConfirmed = true;
+    } else if (a === '--fail-on-policy' || a === '--fail-on-confirmed') {
+      failOnPolicy = true;
     } else if (a === '--verbose') {
       verbose = true;
     } else if (a === '--port' && args[i + 1]) {
@@ -169,10 +170,13 @@ async function main(): Promise<void> {
       skepticSpec,
       judgeSpec,
       maxLlmFindings,
-      strictLlm,
+      strictLlm: strictLlm && !failOnPolicy,
       prove,
       onProgress,
     };
+    if (strictLlm && failOnPolicy) {
+      process.stderr.write('LLM triage is best effort when the CI policy gate is enabled.\n');
+    }
     const report = await runAudit(auditOptions);
 
     if (outputFile) {
@@ -200,7 +204,7 @@ async function main(): Promise<void> {
 
     if (report.coverage !== 'complete') {
       process.exitCode = 2;
-    } else if (failOnConfirmed && report.summary.confirmed > 0) {
+    } else if (failOnPolicy && report.summary.ciBlocking > 0) {
       process.exitCode = 1;
     }
   } finally {
