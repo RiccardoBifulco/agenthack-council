@@ -14,33 +14,29 @@
 
 **The Adversarial AI Security Harness (`Advocate → Skeptic → Judge` + Static Evidence) for AI Coding Agents, MCP Servers, `SKILL.md`, and Agentic Repositories.**
 
-[Quickstart](#-quickstart-zero-install) · [Why a Model Council?](#-why-a-model-council) · [10 Threat Rules](#-10-built-in-agent--mcp-threat-rules) · [Zero-Key & Cross-Model LLMs](#-zero-api-key-cli--cross-model-council) · [GitHub Action & SARIF](#-github-action--code-scanning-sarif-210) · [Security Guarantees](#-security--privacy-guarantees)
+[Quickstart](#-quickstart) · [Why a Model Council?](#-why-a-model-council) · [10 Threat Rules](#-10-built-in-agent--mcp-threat-rules) · [Zero-Key & Cross-Model LLMs](#-zero-api-key-cli--cross-model-council) · [GitHub Action & SARIF](#-github-action--code-scanning-sarif-210) · [Security Guarantees](#-security--privacy-guarantees)
 
 </div>
 
 ---
 
-## ⚡ Quickstart (Zero Install)
+## ⚡ Quickstart
 
-Run the interactive demo right now — it spins up an ephemeral workspace with poisoned MCP tools, smuggled Unicode instructions, and benign security docs so you can watch the Council **review static findings** and **dismiss false positives**:
-
-```bash
-# Terminal report (runs in <20ms, zero API keys required)
-npx github:RiccardoBifulco/agenthack-council demo
-
-# Launch the interactive dark-mode Web Dashboard on http://127.0.0.1:4317
-npx github:RiccardoBifulco/agenthack-council demo --ui
-```
-
-Audit your own machine's **Claude Code, Cursor, Codex, Gemini, Windsurf, or Claude Desktop** setup — or scan any third-party skill / MCP repo before installing it:
+Try the scanner on bundled fixtures with Node.js 18.18 or later. The first run downloads the package from GitHub. The demo uses local heuristics and needs no API key.
 
 ```bash
-# Auto-discovers ~/.claude, ~/.cursor, ~/.codex, ~/.gemini/config, Windsurf & Claude Desktop
-npx github:RiccardoBifulco/agenthack-council --prove
-
-# Audit a third-party MCP server or skill repo and open the Web UI
-npx github:RiccardoBifulco/agenthack-council ./path/to/mcp-server --prove --ui
+npx --yes --package=github:RiccardoBifulco/agenthack-council agenthack-council demo --council heuristic
 ```
+
+The report shows which findings the deterministic CI policy would block, along with the Council's triage verdicts and static evidence. To explore the findings in your browser, append `--ui` and open [the local dashboard](http://127.0.0.1:4317).
+
+### Scan your own repository
+
+```bash
+npx --yes --package=github:RiccardoBifulco/agenthack-council agenthack-council . --council heuristic
+```
+
+Run this from your repository root, or replace `.` with the path you want to inspect. Add `--json` for structured output or `--fail-on-policy` to use the deterministic CI gate.
 
 <div align="center">
   <img src="./docs/assets/terminal-demo.svg" alt="AgentHack Council Terminal Output" width="100%" />
