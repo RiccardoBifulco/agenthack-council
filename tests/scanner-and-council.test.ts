@@ -123,8 +123,9 @@ test('Model Council confirms poisoned MCP/skills, withholds uncertain prose, dis
     assert.ok(report.summary.dismissed >= 1, 'Expected benign fenced anti-pattern doc to be dismissed as FP');
     assert.ok(report.summary.uncertain >= 1, 'Expected unpinned npx in prose markdown to be marked UNCERTAIN');
 
-    const withProof = report.findings.filter((f) => f.proof?.triggeredCanary);
-    assert.ok(withProof.length >= 2, 'Expected canary prover to flag SSH/env exfiltration targets');
+    const evidence = report.findings.flatMap((f) => f.proof ? [f.proof] : []);
+    assert.ok(evidence.some((item) => item.signal === 'credential-reference' || item.signal === 'network-reference'));
+    assert.ok(evidence.every((item) => item.method === 'static' && !item.executed && !item.triggeredCanary));
 
     const sarif = buildSarifReport(report) as {
       version: string;
@@ -145,7 +146,7 @@ test('Web Dashboard serves HTML, /api/report, and /api/sarif cleanly on ephemera
   const demoDir = await createDemoWorkspace();
   try {
     const report = await runAudit({ targets: [demoDir], councilMode: 'heuristic', prove: true });
-    const srv = await startWebDashboard(report, 0, true);
+    const srv = await startWebDashboard(report, 0, { targets: [demoDir], councilMode: 'heuristic', prove: true });
     try {
       const htmlRes = await fetch(srv.url);
       assert.equal(htmlRes.status, 200);
@@ -156,6 +157,16 @@ test('Web Dashboard serves HTML, /api/report, and /api/sarif cleanly on ephemera
       assert.equal(sarifRes.status, 200);
       const sarifJson = (await sarifRes.json()) as { version: string };
       assert.equal(sarifJson.version, '2.1.0');
+      const json = await fetch(srv.url + '/api/report');
+      assert.deepEqual((await json.json() as { summary: unknown }).summary, report.summary);
+      const rescan = await fetch(srv.url + '/api/scan', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: demoDir }),
+      });
+      assert.equal(rescan.status, 200);
+      const rescanned = await rescan.json() as typeof report;
+      assert.deepEqual(rescanned.findings.map(({ proof }) => proof), report.findings.map(({ proof }) => proof));
     } finally {
       await srv.close();
     }

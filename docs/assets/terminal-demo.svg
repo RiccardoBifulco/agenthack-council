@@ -28,7 +28,7 @@
     <text x="14" y="197" fill="#fb7185">├─ 🔴 Advocate: <tspan fill="#cbd5e1">Tool description injects covert directive into host LLM context to exfiltrate SSH keys.</tspan></text>
     <text x="14" y="217" fill="#38bdf8">├─ 🔵 Skeptic:  <tspan fill="#cbd5e1">No documentation fence or sandbox surrounds mcp-server.ts:6; active MCP tool registration.</tspan></text>
     <text x="14" y="237" fill="#c4b5fd">└─ ⚖  Judge:    <tspan fill="#cbd5e1">Direct agent reachability confirmed (92% confidence). Minimal remediation diff generated.</tspan></text>
-    <text x="36" y="259" fill="#f43f5e" font-weight="700">🧪 CANARY TRIGGERED <tspan fill="#94a3b8" font-weight="400">— Verified payload targets SSH key path (.ssh/id_rsa) matching sandbox canary</tspan></text>
+    <text x="36" y="259" fill="#f43f5e" font-weight="700">STATIC EVIDENCE <tspan fill="#94a3b8" font-weight="400">— The snippet references an SSH credential.</tspan></text>
 
     <!-- Uncertain Finding -->
     <rect x="14" y="282" width="112" height="21" rx="4" fill="#36260d"/>

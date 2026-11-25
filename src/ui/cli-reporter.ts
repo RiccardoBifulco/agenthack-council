@@ -26,14 +26,16 @@ function sevBadge(s: Severity): string {
   return `${C.cyan}LOW${C.reset}`;
 }
 
-function gradeBadge(grade: ScanReport['grade'], score: number): string {
+function gradeBadge(grade: ScanReport['grade'], score: ScanReport['score']): string {
+  if (grade === null || score === null) return 'Not graded';
   const color = score >= 90 ? C.green : score >= 70 ? C.yellow : C.red;
   return `${color}${C.bold}${grade} (${score}/100)${C.reset}`;
 }
 
 function verdictPill(f: EvaluatedFinding): string {
-  const v = f.council?.judge.verdict ?? 'CONFIRMED';
+  const v = f.verdict;
   if (v === 'CONFIRMED') return `${C.bgRed}${C.red}${C.bold} ⚖ CONFIRMED ${C.reset}`;
+  if (v === 'UNREVIEWED') return C.gray + 'UNREVIEWED' + C.reset;
   if (v === 'UNCERTAIN') return `${C.bgYellow}${C.yellow}${C.bold} ⚖ UNCERTAIN ${C.reset}`;
   return `${C.bgGreen}${C.green}${C.bold} ⚖ DISMISSED (FP) ${C.reset}`;
 }
@@ -72,22 +74,27 @@ export function renderCliReport(report: ScanReport, options?: { showDismissed?: 
       `  ${C.gray}Scanned:${C.reset} ${report.filesScanned} agent/MCP files in ${report.durationMs}ms  ${C.gray}|${C.reset}  ` +
       `${C.gray}Council:${C.reset} ${C.purple}${report.modelName}${C.reset}\n` +
       `  ${C.gray}Posture:${C.reset} ${gradeBadge(report.grade, report.score)}  ${C.gray}|${C.reset}  ` +
-      `${C.red}${C.bold}${report.summary.confirmed} Confirmed${C.reset} · ` +
+      `${C.red}${C.bold}${report.summary.confirmed} Council-confirmed${C.reset} · ` +
       `${C.yellow}${report.summary.uncertain} Uncertain${C.reset} · ` +
       `${C.green}${report.summary.dismissed} Dismissed FPs${C.reset}`,
   );
+  if (report.summary.unreviewed) lines.push('  Unreviewed candidates: ' + report.summary.unreviewed);
+  if (report.coverage !== 'complete') {
+    lines.push('  Coverage: ' + report.coverage);
+    for (const issue of report.scanIssues) lines.push('  Skipped ' + issue.path + ' (' + issue.reason + ')');
+  }
   if (report.fallbackWarning) {
     lines.push(`  ${C.yellow}⚠ Note:${C.reset}   ${C.gray}${report.fallbackWarning}${C.reset}`);
   }
   lines.push(bar);
 
   if (report.findings.length === 0) {
-    lines.push(`  ${C.green}${C.bold}✓ Clean scan.${C.reset} No suspicious directives, secrets, or poisoned MCP tools detected.`);
+    if (report.coverage === 'complete') lines.push(`  ${C.green}${C.bold}✓ Clean scan.${C.reset} No suspicious directives, secrets, or poisoned MCP tools detected.`);
     lines.push('');
     return lines.join('\n');
   }
 
-  const actionable = report.findings.filter((f) => (f.council?.judge.verdict ?? 'CONFIRMED') !== 'DISMISSED');
+  const actionable = report.findings.filter((f) => (f.verdict) !== 'DISMISSED');
   const dismissedCount = report.findings.length - actionable.length;
   // Show dismissed in full if `--verbose` is passed OR if demo/small report (`<= 6` total findings)
   const visibleFindings = showDismissed || report.findings.length <= 6 ? report.findings : actionable;
@@ -119,9 +126,8 @@ export function renderCliReport(report: ScanReport, options?: { showDismissed?: 
       );
     }
 
-    if (f.proof?.executed) {
-      const icon = f.proof.triggeredCanary ? `${C.red}${C.bold}🧪 CANARY TRIGGERED${C.reset}` : `${C.green}🧪 Canary Safe${C.reset}`;
-      lines.push(`     ${icon} ${C.gray}— ${f.proof.details}${C.reset}`);
+    if (f.proof) {
+      lines.push('     Static evidence: ' + f.proof.details);
     }
   }
 

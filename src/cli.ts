@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ProviderName } from './council/providers.js';
 import { createDemoWorkspace } from './fixtures/demo.js';
-import { runAudit } from './index.js';
+import { runAudit, type AuditOptions } from './index.js';
 import { renderCliReport, renderRulesCatalog } from './ui/cli-reporter.js';
 import { buildSarifReport } from './ui/sarif.js';
 import { startWebDashboard } from './ui/web-server.js';
@@ -25,16 +25,16 @@ Options:
   --advocate <spec>       Per-role provider[:model] override (e.g. claude-cli:sonnet)
   --skeptic <spec>        Per-role provider[:model] override (e.g. codex-cli:o4-mini)
   --judge <spec>          Per-role provider[:model] override (e.g. ollama:qwen2.5-coder:14b)
-  --council <mode>        Council mode: auto | llm | heuristic | off (default: auto)
+  --council <mode>        Council mode: auto | llm | heuristic | off (auto is offline without a provider choice)
   --max-llm <number>      Max candidates sent to live LLM Council per scan (default: 15)
-  --strict-llm            Fail instead of falling back to heuristic if LLM provider is unavailable
-  --prove                 Run ephemeral Canary Sandbox proof on confirmed findings
+  --strict-llm            Fail instead of falling back to heuristic if LLM review fails or returns incomplete results
+  --prove                 Add static evidence annotations to Council-confirmed findings
   --ui                    Launch interactive dark-mode Web Dashboard (http://127.0.0.1:4317)
   --port <number>         Port for --ui dashboard (default: 4317)
   --json                  Output structured JSON report to stdout
   --sarif                 Output SARIF 2.1.0 report to stdout (for GitHub Code Scanning)
   -o, --output <file>     Write JSON or SARIF report to file (inferred from --sarif or .sarif ext)
-  --fail-on-confirmed     Exit with code 1 if any finding is CONFIRMED (for CI / GitHub Actions)
+  --fail-on-confirmed     Exit with code 1 if the Council confirms a finding
   --verbose               Print all dismissed false-positive details in CLI output
   -v, --version           Print version
   -h, --help              Show this help
@@ -43,11 +43,13 @@ Options:
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  if (args.includes('-h') || args.includes('--help')) {
+  const separator = args.indexOf('--');
+  const flags = separator === -1 ? args : args.slice(0, separator);
+  if (flags.includes('-h') || flags.includes('--help')) {
     printHelp();
     return;
   }
-  if (args.includes('-v') || args.includes('--version')) {
+  if (flags.includes('-v') || flags.includes('--version')) {
     console.log(VERSION);
     return;
   }
@@ -69,11 +71,20 @@ async function main(): Promise<void> {
   let verbose = false;
   let port = 4317;
   const positional: string[] = [];
+  let subcommand: 'rules' | 'demo' | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '--council' && args[i + 1]) {
-      councilMode = args[++i] as typeof councilMode;
+    if (a === '--') {
+      positional.push(...args.slice(i + 1));
+      break;
+    }
+    if (a === '--council') {
+      const mode = args[++i];
+      if (mode !== 'auto' && mode !== 'llm' && mode !== 'heuristic' && mode !== 'off') {
+        throw new Error('--council expects auto, llm, heuristic, or off');
+      }
+      councilMode = mode;
     } else if (a === '--provider' && args[i + 1]) {
       provider = args[++i] as ProviderName;
     } else if (a === '--model' && args[i + 1]) {
@@ -105,11 +116,15 @@ async function main(): Promise<void> {
     } else if (a === '--port' && args[i + 1]) {
       port = Number(args[++i]) || 4317;
     } else if (!a.startsWith('-')) {
-      positional.push(a);
+      if (!subcommand && positional.length === 0 && (a === 'rules' || a === 'demo')) {
+        subcommand = a;
+      } else {
+        positional.push(a);
+      }
     }
   }
 
-  if (positional[0] === 'rules') {
+  if (subcommand === 'rules') {
     console.log(renderRulesCatalog());
     return;
   }
@@ -131,7 +146,7 @@ async function main(): Promise<void> {
     targets = [];
   }
 
-  if (positional[0] === 'demo') {
+  if (subcommand === 'demo') {
     demoDir = await createDemoWorkspace();
     targets = [demoDir];
     prove = true;
@@ -145,7 +160,7 @@ async function main(): Promise<void> {
       };
 
   try {
-    const report = await runAudit({
+    const auditOptions: AuditOptions = {
       targets,
       councilMode,
       provider,
@@ -157,7 +172,8 @@ async function main(): Promise<void> {
       strictLlm,
       prove,
       onProgress,
-    });
+    };
+    const report = await runAudit(auditOptions);
 
     if (outputFile) {
       const writeAsSarif = sarifOut || outputFile.toLowerCase().endsWith('.sarif');
@@ -177,12 +193,14 @@ async function main(): Promise<void> {
     }
 
     if (ui) {
-      const { url } = await startWebDashboard(report, port, prove);
+      const { url } = await startWebDashboard(report, port, auditOptions);
       console.log(`  🌐 Web UI live at \x1b[1m\x1b[36m${url}\x1b[0m (Press Ctrl+C to stop)\n`);
       await new Promise(() => {}); // keep server alive until SIGINT
     }
 
-    if (failOnConfirmed && report.summary.confirmed > 0) {
+    if (report.coverage !== 'complete') {
+      process.exitCode = 2;
+    } else if (failOnConfirmed && report.summary.confirmed > 0) {
       process.exitCode = 1;
     }
   } finally {
